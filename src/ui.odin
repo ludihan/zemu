@@ -2,6 +2,7 @@ package main
 
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import sdl "vendor:sdl3"
 
 import "emu"
@@ -10,7 +11,7 @@ import "gui"
 ui_init_windows :: proc(app: ^App) {
 	ctx := &app.ui
 	app.win_load    = {title = "LOAD GAME", rect = {20, 22, 330, 214}}
-	app.win_input   = {title = "INPUT CONFIG", rect = {40, 30, 300, 178}}
+	app.win_input   = {title = "INPUT CONFIG", rect = {40, 26, 300, 188}}
 	app.win_video   = {title = "VIDEO", rect = {60, 40, 236, 161}}
 	app.win_ui      = {title = "INTERFACE", rect = {70, 50, 220, 108}}
 	app.win_sound   = {title = "SOUND", rect = {80, 60, 200, 84}}
@@ -45,11 +46,51 @@ ui_finish_rebind :: proc(app: ^App, sc: sdl.Scancode) {
 	case .ESCAPE:
 		// cancel
 	case .BACKSPACE, .DELETE:
-		app.cfg.keys[app.input_pad][btn] = .UNKNOWN
+		if app.rebind_pad {
+			app.cfg.pad_map[app.input_pad][btn] = PAD_NONE
+		} else {
+			app.cfg.keys[app.input_pad][btn] = .UNKNOWN
+		}
 	case:
-		app.cfg.keys[app.input_pad][btn] = sc
+		if !app.rebind_pad {
+			app.cfg.keys[app.input_pad][btn] = sc
+		}
 	}
 	app.rebinding = nil
+}
+
+ui_finish_pad_rebind :: proc(app: ^App, p: Pad_Input) {
+	if btn, ok := app.rebinding.?; ok {
+		app.cfg.pad_map[app.input_pad][btn] = p
+	}
+	app.rebinding = nil
+}
+
+// Short, uppercase name of a pad binding for the input window.
+@(private = "file")
+pad_label :: proc(p: Pad_Input) -> string {
+	switch p {
+	case PAD_NONE: return "-"
+	case PAD_LEFT_TRIGGER: return "LT"
+	case PAD_RIGHT_TRIGGER: return "RT"
+	}
+	#partial switch sdl.GamepadButton(p) {
+	case .SOUTH: return "SOUTH"
+	case .EAST: return "EAST"
+	case .WEST: return "WEST"
+	case .NORTH: return "NORTH"
+	case .BACK: return "BACK"
+	case .START: return "START"
+	case .LEFT_SHOULDER: return "LB"
+	case .RIGHT_SHOULDER: return "RB"
+	case .LEFT_STICK: return "L3"
+	case .RIGHT_STICK: return "R3"
+	case .DPAD_UP: return "D-UP"
+	case .DPAD_DOWN: return "D-DOWN"
+	case .DPAD_LEFT: return "D-LEFT"
+	case .DPAD_RIGHT: return "D-RIGHT"
+	}
+	return strings.to_upper(pad_input_name(p), context.temp_allocator)
 }
 
 // --- menu bar --------------------------------------------------------------
@@ -291,25 +332,37 @@ draw_input_window :: proc(app: ^App) {
 	gui.text_box(ctx, {120, 0, size.x - 120, 11}, pad_name)
 
 	keys := &app.cfg.keys[app.input_pad]
+	pads := &app.cfg.pad_map[app.input_pad]
 	col_w := (size.x - 6) / 2
+	field_w := (col_w - 42 - 2) / 2
+	gui.label_dim(ctx, 42, 14, "KEY")
+	gui.label_dim(ctx, 44 + field_w, 14, "PAD")
+	gui.label_dim(ctx, col_w + 6 + 42, 14, "KEY")
+	gui.label_dim(ctx, col_w + 6 + 44 + field_w, 14, "PAD")
 	i: i32 = 0
 	for name, btn in BUTTON_NAMES {
 		col := i / 7
 		row := i % 7
 		x := col * (col_w + 6)
-		y := 18 + row * 15
+		y := 24 + row * 15
 		gui.label(ctx, x, y + 2, name)
 		waiting := app.rebinding == btn
-		if gui.binding(ctx, {x + 42, y, col_w - 42, 12}, scancode_name(keys[btn]), waiting) {
+		if gui.binding(ctx, {x + 42, y, field_w, 12}, scancode_name(keys[btn]), waiting && !app.rebind_pad) {
 			app.rebinding = btn
+			app.rebind_pad = false
+		}
+		if gui.binding(ctx, {x + 44 + field_w, y, field_w, 12}, pad_label(pads[btn]), waiting && app.rebind_pad) {
+			app.rebinding = btn
+			app.rebind_pad = true
 		}
 		i += 1
 	}
-	y: i32 = 18 + 7 * 15 + 2
-	gui.label_dim(ctx, 0, y, "CLICK A FIELD, THEN PRESS A KEY.")
-	gui.label_dim(ctx, 0, y + 10, "DEL CLEARS, ESC CANCELS. PADS MAP AUTOMATICALLY.")
+	y: i32 = 24 + 7 * 15 + 2
+	gui.label_dim(ctx, 0, y, "CLICK A FIELD, THEN PRESS A KEY OR PAD BUTTON.")
+	gui.label_dim(ctx, 0, y + 10, "DEL CLEARS, ESC CANCELS. GUIDE OPENS THE MENU.")
 	if gui.button(ctx, {size.x - 64, y + 22, 64, 14}, "DEFAULTS") {
 		app.cfg.keys[app.input_pad] = app.input_pad == 0 ? DEFAULT_KEYS_P1 : DEFAULT_KEYS_P2
+		app.cfg.pad_map[app.input_pad] = DEFAULT_PAD_MAP
 		app.rebinding = nil
 	}
 	if !app.win_input.open {

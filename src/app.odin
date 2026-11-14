@@ -79,6 +79,7 @@ App :: struct {
 	message_len: int,
 	input_pad:   int,
 	rebinding:   Maybe(emu.Button),
+	rebind_pad:  bool, // the binding being changed is a gamepad one
 }
 
 // `data_dir` overrides where config, saves and screenshots live (tests use a
@@ -452,6 +453,56 @@ handle_hotkey :: proc(app: ^App, k: sdl.KeyboardEvent) -> bool {
 	return false
 }
 
+// Feeds a synthetic key press through the same path as the keyboard.
+@(private = "file")
+send_key :: proc(app: ^App, sc: sdl.Scancode) {
+	e: sdl.Event
+	e.key = {type = .KEY_DOWN, scancode = sc, key = sdl.GetKeyFromScancode(sc, {}, false), down = true}
+	if handle_hotkey(app, e.key) {
+		return
+	}
+	if app.menu_active {
+		gui.handle_event(&app.ui, &e)
+	}
+}
+
+// Gamepad buttons outside gameplay: the Guide button opens and closes the
+// menu like Esc, and in the menu the d-pad and face buttons navigate.
+// Returns true when the press was used here.
+app_gamepad_button :: proc(app: ^App, id: sdl.JoystickID, b: sdl.GamepadButton) -> bool {
+	if app.rebinding != nil && app.rebind_pad {
+		if b != .GUIDE {
+			ui_finish_pad_rebind(app, Pad_Input(b))
+		}
+		return true
+	}
+	if b == .GUIDE {
+		send_key(app, .ESCAPE)
+		return true
+	}
+	if !app.menu_active {
+		return false
+	}
+	ctx := &app.ui
+	if !gui.menu_is_open(ctx) && gui.focused_window(ctx) == nil && (b == .SOUTH || b == .DPAD_DOWN) {
+		gui.menu_open(ctx, 0) // nothing focused: start at the GAME menu
+		return true
+	}
+	sc: sdl.Scancode
+	#partial switch b {
+	case .DPAD_UP:    sc = .UP
+	case .DPAD_DOWN:  sc = .DOWN
+	case .DPAD_LEFT:  sc = .LEFT
+	case .DPAD_RIGHT: sc = .RIGHT
+	case .SOUTH:      sc = .RETURN
+	case .EAST:       sc = .ESCAPE
+	case:             return false
+	}
+	_ = id
+	send_key(app, sc)
+	return true
+}
+
 app_handle_events :: proc(app: ^App) {
 	e: sdl.Event
 	for sdl.PollEvent(&e) {
@@ -463,6 +514,18 @@ app_handle_events :: proc(app: ^App) {
 			gamepad_added(&app.pads, e.gdevice.which)
 		case .GAMEPAD_REMOVED:
 			gamepad_removed(&app.pads, e.gdevice.which)
+		case .GAMEPAD_BUTTON_DOWN:
+			if app_gamepad_button(app, e.gbutton.which, sdl.GamepadButton(e.gbutton.button)) {
+				continue
+			}
+		case .GAMEPAD_AXIS_MOTION:
+			// Triggers can be bound like buttons.
+			if app.rebinding != nil && app.rebind_pad && e.gaxis.value > TRIGGER_THRESHOLD {
+				#partial switch sdl.GamepadAxis(e.gaxis.axis) {
+				case .LEFT_TRIGGER:  ui_finish_pad_rebind(app, PAD_LEFT_TRIGGER)
+				case .RIGHT_TRIGGER: ui_finish_pad_rebind(app, PAD_RIGHT_TRIGGER)
+				}
+			}
 		case .KEY_DOWN:
 			if app.menu_active && app.ui.text_focus != nil {
 				gui.handle_event(&app.ui, &e) // typing into a text field
