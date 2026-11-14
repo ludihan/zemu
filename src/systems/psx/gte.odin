@@ -203,8 +203,9 @@ check_mac :: proc(g: ^Gte, i: int, v: i64) -> i64 {
 @(private = "file")
 set_mac :: proc(g: ^Gte, i: int, v: i64) -> i64 {
 	r := check_mac(g, i, v)
+	// MAC1-3 hold 32 bits, and IR saturates from that truncated value
 	g.mac[i] = i32(r >> g.sf)
-	return r >> g.sf
+	return i64(g.mac[i])
 }
 
 @(private = "file")
