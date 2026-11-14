@@ -7,7 +7,7 @@ case "$mode" in
 	debug)   odin build src -out:build/zemu -debug -vet -strict-style ;;
 	release) odin build src -out:build/zemu -o:speed -vet -strict-style ;;
 	test)
-		for pkg in src/systems/nes src/systems/snes src/systems/gb src/systems/psx; do
+		for pkg in src/systems/nes src/systems/snes src/systems/gb src/systems/sms src/systems/psx; do
 			odin test "$pkg" -vet -strict-style -o:speed
 		done
 		# interface tests drive the real app headlessly; SDL is not thread-safe
