@@ -158,3 +158,56 @@ h_counter_jumps :: proc(t: ^testing.T) {
 	c.line_cycles = LINE_CYCLES - 1 // last pair of the line
 	testing.expect_value(t, port_in(c, 0x7F), 0xFF)
 }
+
+// Writes `data` to VRAM at `addr`.
+@(private = "file")
+vram_fill :: proc(c: ^Console, addr: u16, data: ..u8) {
+	vdp_seek(c, addr, 1)
+	for b in data {port_out(c, 0xBE, b)}
+}
+
+@(test)
+tms9918_graphics_modes_and_sprites :: proc(t: ^testing.T) {
+	rom := make([]u8, 0x8000)
+	defer delete(rom)
+	c, err := create(rom, false)
+	if !testing.expect_value(t, err, emu.Load_Error.None) {return}
+	defer destroy(c)
+	WHITE, DARK_RED, LIGHT_BLUE, BLACK := u32(0xFFFFFF), u32(0xD4524D), u32(0x7D76FC), u32(0x000000)
+
+	// Graphics I: names at $3800, patterns at $0000, colors at $2000
+	vdp_reg(c, 0, 0x00)
+	vdp_reg(c, 1, 0x40)
+	vdp_reg(c, 2, 0x0E)
+	vdp_reg(c, 3, 0x80)
+	vdp_reg(c, 4, 0x00)
+	vdp_reg(c, 5, 0x7E) // sprite attributes at $3F00
+	vdp_reg(c, 6, 0x00)
+	vdp_reg(c, 7, 0x04) // backdrop dark blue
+	vram_fill(c, 0x3800, 9)                                    // name (0,0) = pattern 9
+	vram_fill(c, 9 * 8, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0, 0xF0) // left half set
+	vram_fill(c, 0x2000 + 1, 0xF6)                             // patterns 8-15: white on dark red
+	vram_fill(c, 0x3F00, 0xD0)                                 // no sprites
+	vdp_line(&c.vdp, 0)
+	fb := c.vdp.framebuffer[:]
+	testing.expect_value(t, fb[0], WHITE)
+	testing.expect_value(t, fb[4], DARK_RED)
+
+	// Graphics II: the bottom third uses its own patterns and colors
+	vdp_reg(c, 0, 0x02)
+	vdp_reg(c, 3, 0xFF) // colors at $2000, unmasked
+	vdp_reg(c, 4, 0x03) // patterns at $0000, unmasked
+	vram_fill(c, 0x3800 + 16 * 32, 3)                          // name (0, 16) = 3, bottom third
+	vram_fill(c, (512 + 3) * 8, 0x0F)                          // its first row: right half
+	vram_fill(c, 0x2000 + (512 + 3) * 8, 0x15)                 // black on light blue
+	vdp_line(&c.vdp, 128)
+	testing.expect_value(t, fb[128 * SCREEN_W + 0], LIGHT_BLUE)
+	testing.expect_value(t, fb[128 * SCREEN_W + 4], BLACK)
+
+	// a white 8x8 sprite at (16, 10) over it
+	vram_fill(c, 0x3F00, 9, 16, 1, 0x0F, 0xD0)                 // y = 9 means line 10
+	vram_fill(c, 0x0008, 0x80)                                 // sprite pattern 1, top row: one pixel
+	vdp_line(&c.vdp, 10)
+	testing.expect_value(t, fb[10 * SCREEN_W + 16], WHITE)
+	testing.expect(t, fb[10 * SCREEN_W + 17] != WHITE, "only the set pixel is drawn")
+}

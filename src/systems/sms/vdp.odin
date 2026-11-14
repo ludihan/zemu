@@ -166,6 +166,10 @@ vdp_line :: proc(v: ^Vdp, line: int) -> (frame_start: bool) {
 @(private = "file")
 render_line :: proc(v: ^Vdp, y: int) {
 	row := v.framebuffer[y * SCREEN_W:][:SCREEN_W]
+	if v.regs[0] & 0x04 == 0 {
+		render_legacy(v, y, row) // Mode 4 off: the TMS9918 modes
+		return
+	}
 	backdrop := color(v, 16 + int(v.regs[7] & 0x0F))
 	if v.regs[1] & 0x40 == 0 {
 		for &p in row {p = 0}
@@ -259,5 +263,137 @@ render_line :: proc(v: ^Vdp, y: int) {
 
 	if v.regs[0] & 0x20 != 0 {
 		for x in 0 ..< 8 {row[x] = backdrop}
+	}
+}
+
+// --- TMS9918 modes ----------------------------------------------------------
+// The SG-1000's video, which the Master System's VDP keeps for older games:
+// Graphics I and II, text and multicolor, with the TMS9918's own sprites and
+// fixed 16-color palette.
+
+@(private = "file")
+TMS_PALETTE := [16]u32 {
+	0x000000, 0x000000, 0x21C842, 0x5EDC78, 0x5455ED, 0x7D76FC, 0xD4524D, 0x42EBF5,
+	0xFC5554, 0xFF7978, 0xD4C154, 0xE6CE80, 0x21B03B, 0xC95BBA, 0xCCCCCC, 0xFFFFFF,
+}
+
+@(private = "file")
+render_legacy :: proc(v: ^Vdp, y: int, row: []u32) {
+	backdrop := TMS_PALETTE[v.regs[7] & 0x0F]
+	if v.regs[1] & 0x40 == 0 {
+		for &p in row {p = backdrop}
+		return
+	}
+	pick :: #force_inline proc(index: u8, backdrop: u32) -> u32 {
+		return index == 0 ? backdrop : TMS_PALETTE[index]
+	}
+	text := v.regs[1] & 0x10 != 0
+	multicolor := v.regs[1] & 0x08 != 0
+	graphics2 := v.regs[0] & 0x02 != 0
+	name_base := int(v.regs[2] & 0x0F) << 10
+	ty := y / 8
+	switch {
+	case text:
+		// 40 columns of 6-pixel characters between 8-pixel borders
+		fg := pick(v.regs[7] >> 4, backdrop)
+		pattern_base := int(v.regs[4] & 0x07) << 11
+		for x in 0 ..< SCREEN_W {
+			if x < 8 || x >= 248 {
+				row[x] = backdrop
+				continue
+			}
+			col := (x - 8) / 6
+			name := int(v.vram[(name_base + ty * 40 + col) & 0x3FFF])
+			bits := v.vram[(pattern_base + name * 8 + y % 8) & 0x3FFF]
+			row[x] = bits & (0x80 >> u8((x - 8) % 6)) != 0 ? fg : backdrop
+		}
+		return // no sprites in text mode
+	case multicolor:
+		// each name selects 4x4-pixel blocks of two colors per byte
+		pattern_base := int(v.regs[4] & 0x07) << 11
+		for x in 0 ..< SCREEN_W {
+			name := int(v.vram[(name_base + ty * 32 + x / 8) & 0x3FFF])
+			b := v.vram[(pattern_base + name * 8 + (ty & 3) * 2 + (y / 4) & 1) & 0x3FFF]
+			row[x] = pick(x & 4 == 0 ? b >> 4 : b & 0x0F, backdrop)
+		}
+	case:
+		for x in 0 ..< SCREEN_W {
+			name := int(v.vram[(name_base + ty * 32 + x / 8) & 0x3FFF])
+			bits, colors: u8
+			if graphics2 {
+				// three thirds of the screen with 256 patterns each; registers
+				// 3 and 4 also mask the table addresses
+				index := (ty / 8) * 256 + name
+				pattern := (int(v.regs[4] & 0x04) << 11) | (index * 8 + y % 8) & (int(v.regs[4] & 0x03) << 11 | 0x7FF)
+				color_addr := (int(v.regs[3] & 0x80) << 6) | (index * 8 + y % 8) & (int(v.regs[3] & 0x7F) << 6 | 0x3F)
+				bits = v.vram[pattern & 0x3FFF]
+				colors = v.vram[color_addr & 0x3FFF]
+			} else {
+				bits = v.vram[(int(v.regs[4] & 0x07) << 11 + name * 8 + y % 8) & 0x3FFF]
+				colors = v.vram[(int(v.regs[3]) << 6 + name / 8) & 0x3FFF]
+			}
+			on := bits & (0x80 >> u8(x & 7)) != 0
+			row[x] = pick(on ? colors >> 4 : colors & 0x0F, backdrop)
+		}
+	}
+	legacy_sprites(v, y, row)
+}
+
+// Up to four of 32 sprites per line; more set the fifth-sprite flag and
+// number in the status register.
+@(private = "file")
+legacy_sprites :: proc(v: ^Vdp, y: int, row: []u32) {
+	sat := int(v.regs[5] & 0x7F) << 7
+	pattern_base := int(v.regs[6] & 0x07) << 11
+	big := v.regs[1] & 0x02 != 0
+	zoom := v.regs[1] & 0x01 != 0
+	size := big ? 16 : 8
+	scale := zoom ? 2 : 1
+	drawn: [SCREEN_W]bool
+	count := 0
+	for i in 0 ..< 32 {
+		entry := sat + i * 4
+		sy := int(v.vram[entry & 0x3FFF])
+		if sy == 0xD0 {
+			break
+		}
+		top := sy + 1
+		if top > 0xE0 {top -= 256}
+		if y < top || y >= top + size * scale {
+			continue
+		}
+		count += 1
+		if count > 4 {
+			if v.status & 0x40 == 0 {
+				v.status = (v.status & 0xE0) | 0x40 | u8(i)
+			}
+			break
+		}
+		sx := int(v.vram[(entry + 1) & 0x3FFF])
+		name := int(v.vram[(entry + 2) & 0x3FFF])
+		attr := v.vram[(entry + 3) & 0x3FFF]
+		if attr & 0x80 != 0 {sx -= 32} // early clock
+		if big {name &= 0xFC}
+		line := (y - top) / scale
+		for col in 0 ..< size * scale {
+			x := sx + col
+			if x < 0 || x >= SCREEN_W {
+				continue
+			}
+			c := col / scale
+			// 16x16 sprites: four patterns, left column first
+			addr := pattern_base + name * 8 + (c / 8) * 16 + line
+			if v.vram[addr & 0x3FFF] & (0x80 >> u8(c & 7)) == 0 {
+				continue
+			}
+			if drawn[x] {
+				v.status |= 0x20 // collision
+				continue
+			}
+			drawn[x] = true
+			if attr & 0x0F != 0 {
+				row[x] = TMS_PALETTE[attr & 0x0F]
+			}
+		}
 	}
 }
