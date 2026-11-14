@@ -17,6 +17,7 @@ Cartridge :: struct {
 	fast_rom:  bool,
 	title:     [21]u8,
 	battery:   bool,
+	pal:       bool, // region from the header's destination code
 }
 
 @(private = "file")
@@ -81,6 +82,10 @@ cart_load :: proc(cart: ^Cartridge, image: []u8, allocator := context.allocator)
 	h := data[header:][:0x40]
 	copy(cart.title[:], h[0x00:0x15])
 	cart.fast_rom = h[0x15] & 0x10 != 0
+	// Destination codes 2-12 (Europe, Scandinavia, ...) and 17 (Australia)
+	// are PAL releases.
+	country := h[0x19]
+	cart.pal = (country >= 2 && country <= 12) || country == 17
 
 	// $FFD6: low nibble 3-6 means a coprocessor (DSP-n, SuperFX, SA-1, ...)
 	// sits on the cartridge. None of them are emulated, and the games do not

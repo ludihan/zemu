@@ -164,6 +164,7 @@ ppu_read :: proc(c: ^Console, reg: u16) -> u8 {
 		v := u8(0x03) | (p.mdr2 & 0x20)
 		if p.counters_latched {v |= 0x40}
 		if c.frame_count & 1 != 0 {v |= 0x80}
+		if c.pal {v |= 0x10}
 		p.counters_latched = false
 		p.hcount_high = false
 		p.vcount_high = false

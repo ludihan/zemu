@@ -149,3 +149,40 @@ save_state_round_trip_is_deterministic :: proc(t: ^testing.T) {
 	testing.expect_value(t, run(c, audio, 60), want) // identical audio afterwards
 	testing.expect(t, !load_state(c, state[:100]))
 }
+
+@(test)
+pal_header_selects_50hz_timing :: proc(t: ^testing.T) {
+	dir, ok := test_dir()
+	if !ok {
+		log.warn("ZEMU_SNES_TESTS not set")
+		return
+	}
+	rom, err := os.read_entire_file(fmt.tprintf("%s/SPC700/Twinkle/Twinkle.sfc", dir), context.allocator)
+	if !testing.expect(t, err == nil) {return}
+	defer delete(rom)
+	samples_per_frame :: proc(c: ^Console) -> int {
+		audio := new(emu.Audio_Buffer)
+		defer free(audio)
+		for _ in 0 ..< 30 {run_frame(c, {}, audio); audio.count = 0}
+		total := 0
+		for _ in 0 ..< 60 {
+			run_frame(c, {}, audio)
+			total += audio.count / 2
+			audio.count = 0
+		}
+		return total / 60
+	}
+	ntsc, _ := create(rom)
+	defer destroy(ntsc)
+	testing.expect(t, !ntsc.pal)
+	n := samples_per_frame(ntsc)
+
+	rom[0x7FD9] = 0x02 // destination code: Europe (LoROM header)
+	pal, _ := create(rom)
+	defer destroy(pal)
+	testing.expect(t, pal.pal, "header should select PAL")
+	p := samples_per_frame(pal)
+	testing.expectf(t, abs(n - 533) <= 2, "NTSC: %d samples per frame", n)
+	testing.expectf(t, abs(p - 640) <= 2, "PAL: %d samples per frame", p)
+	testing.expect_value(t, ppu_read(pal, 0x213F) & 0x10, 0x10)
+}

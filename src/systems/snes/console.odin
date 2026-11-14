@@ -5,10 +5,12 @@ import "base:intrinsics"
 
 import "../../emu"
 
-MASTER_CLOCK    :: 21_477_272
+MASTER_CLOCK     :: 21_477_272
+MASTER_CLOCK_PAL :: 21_281_370
 APU_CLOCK       :: 1_024_000
 LINE_CYCLES     :: 1364
-LINES_PER_FRAME :: 262
+LINES_PER_FRAME     :: 262
+LINES_PER_FRAME_PAL :: 312
 HDMA_DOT        :: 1104 // master cycle within the line where HBlank work happens
 SAMPLE_RATE     :: 32000
 
@@ -53,9 +55,11 @@ Console :: struct {
 	pads:       [2]emu.Buttons,
 	audio:      ^emu.Audio_Buffer,
 	fingerprint: u64, // hash of the ROM image, ties save states to the game
+	pal:        bool,
 }
 
-create :: proc(rom: []u8, allocator := context.allocator) -> (^Console, emu.Load_Error) {
+// `pal` forces PAL timing; otherwise the header's destination code decides.
+create :: proc(rom: []u8, pal := false, allocator := context.allocator) -> (^Console, emu.Load_Error) {
 	c, alloc_err := new(Console, allocator)
 	if alloc_err != nil {
 		return nil, .Out_Of_Memory
@@ -66,6 +70,7 @@ create :: proc(rom: []u8, allocator := context.allocator) -> (^Console, emu.Load
 	}
 	c.spc.dsp.ram = &c.spc.ram
 	c.fingerprint = emu.fingerprint(rom)
+	c.pal = pal || c.cart.pal
 	power_on(c)
 	return c, .None
 }
@@ -111,7 +116,7 @@ run_frame :: proc(c: ^Console, input: emu.Input, audio: ^emu.Audio_Buffer) {
 	defer c.audio = nil
 	c.frame_ready = false
 	// A frame is ~357k master cycles; the cap protects against a wedged CPU.
-	budget := LINE_CYCLES * LINES_PER_FRAME * 2
+	budget := LINE_CYCLES * LINES_PER_FRAME_PAL * 2
 	for !c.frame_ready && budget > 0 {
 		before := c.pending
 		cpu_step(c)
@@ -127,6 +132,10 @@ frame :: proc(c: ^Console) -> emu.Frame {
 		return {pixels = p.fb_high[:HIRES_WIDTH * h], width = HIRES_WIDTH, height = h, pitch = HIRES_WIDTH}
 	}
 	return {pixels = p.fb_low[:SCREEN_WIDTH * h], width = SCREEN_WIDTH, height = h, pitch = SCREEN_WIDTH}
+}
+
+fps :: proc(c: ^Console) -> f64 {
+	return c.pal ? 50.0070 : 60.0988
 }
 
 save_ram :: proc(c: ^Console) -> []u8 {
@@ -204,7 +213,7 @@ new_line :: proc(c: ^Console) {
 	c.v += 1
 	c.line_done = false
 	c.h_irq_done = false
-	if c.v >= LINES_PER_FRAME {
+	if c.v >= (c.pal ? LINES_PER_FRAME_PAL : LINES_PER_FRAME) {
 		c.v = 0
 		c.nmi_flag = false
 		c.frame_count += 1
@@ -237,7 +246,7 @@ run_apu :: proc(c: ^Console, master: int) {
 	c.apu_debt += i64(master) * APU_CLOCK
 	for c.apu_debt > 0 {
 		cycles := spc_step(&c.spc)
-		c.apu_debt -= i64(cycles) * MASTER_CLOCK
+		c.apu_debt -= i64(cycles) * (c.pal ? MASTER_CLOCK_PAL : MASTER_CLOCK)
 		c.spc_sample_cycles += cycles
 		for c.spc_sample_cycles >= 32 {
 			c.spc_sample_cycles -= 32
