@@ -98,13 +98,13 @@ acid2_matches_reference :: proc(t: ^testing.T) {
 				p := c.ppu.framebuffer[y * SCREEN_W + x]
 				i := (y * img.width + x) * img.channels
 				if c.cgb {
-					dr := abs(int(p >> 16 & 0xFF) - int(img.pixels[i]))
-					dg := abs(int(p >> 8 & 0xFF) - int(img.pixels[i + 1]))
-					db := abs(int(p & 0xFF) - int(img.pixels[i + 2]))
+					dr := abs(int(p >> 16 & 0xFF) - int(image_pixels(img)[i]))
+					dg := abs(int(p >> 8 & 0xFF) - int(image_pixels(img)[i + 1]))
+					db := abs(int(p & 0xFF) - int(image_pixels(img)[i + 2]))
 					if dr + dg + db > 24 {bad += 1}
 				} else {
 					mine := shade_index(p)
-					ref := 3 - int(img.pixels[i]) / 64 // 255=lightest .. 0=darkest
+					ref := 3 - int(image_pixels(img)[i]) / 64 // 255=lightest .. 0=darkest
 					if mine != ref {bad += 1}
 				}
 			}
@@ -178,5 +178,16 @@ blargg_sound_suite :: proc(t: ^testing.T) {
 		}
 		testing.expectf(t, status == 0, "%s: status %d", name, status)
 		destroy(c)
+	}
+}
+
+// core:image changed `Image.pixels` from a bytes.Buffer to a [dynamic]byte;
+// this accepts either so the tests build with older and newer Odin releases.
+@(private = "file")
+image_pixels :: proc(img: ^image.Image) -> []u8 {
+	when type_of(img.pixels) == [dynamic]byte {
+		return img.pixels[:]
+	} else {
+		return img.pixels.buf[:]
 	}
 }

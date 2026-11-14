@@ -42,7 +42,7 @@ shape_difference :: proc(c: ^Console, png_path: string) -> f64 {
 			p := f.pixels[y * f.pitch + x]
 			mine := int(p >> 16 & 0xFF) + int(p >> 8 & 0xFF) + int(p & 0xFF) > 60
 			i := (y * img.width + x) * img.channels
-			ref := int(img.pixels[i]) + int(img.pixels[i + 1]) + int(img.pixels[i + 2]) > 60
+			ref := int(image_pixels(img)[i]) + int(image_pixels(img)[i + 1]) + int(image_pixels(img)[i + 2]) > 60
 			if mine != ref {
 				bad += 1
 			}
@@ -188,4 +188,15 @@ save_state_round_trip_is_deterministic :: proc(t: ^testing.T) {
 	testing.expect(t, load_state(c, state), "state should load")
 	testing.expect_value(t, run(c, audio, 60), want)
 	testing.expect(t, !load_state(c, state[:len(state) / 2]))
+}
+
+// core:image changed `Image.pixels` from a bytes.Buffer to a [dynamic]byte;
+// this accepts either so the tests build with older and newer Odin releases.
+@(private = "file")
+image_pixels :: proc(img: ^image.Image) -> []u8 {
+	when type_of(img.pixels) == [dynamic]byte {
+		return img.pixels[:]
+	} else {
+		return img.pixels.buf[:]
+	}
 }

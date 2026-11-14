@@ -33,7 +33,7 @@ compare_with_png :: proc(t: ^testing.T, c: ^Console, png_path: string) -> f64 {
 		log.errorf("%s: size %dx%d, frame %dx%d", png_path, img.width, img.height, f.width, f.height)
 		return 1
 	}
-	pixels := img.pixels[:]
+	pixels := image_pixels(img)
 	bad := 0
 	for y in 0 ..< f.height {
 		for x in 0 ..< f.width {
@@ -185,4 +185,15 @@ pal_header_selects_50hz_timing :: proc(t: ^testing.T) {
 	testing.expectf(t, abs(n - 533) <= 2, "NTSC: %d samples per frame", n)
 	testing.expectf(t, abs(p - 640) <= 2, "PAL: %d samples per frame", p)
 	testing.expect_value(t, ppu_read(pal, 0x213F) & 0x10, 0x10)
+}
+
+// core:image changed `Image.pixels` from a bytes.Buffer to a [dynamic]byte;
+// this accepts either so the tests build with older and newer Odin releases.
+@(private = "file")
+image_pixels :: proc(img: ^image.Image) -> []u8 {
+	when type_of(img.pixels) == [dynamic]byte {
+		return img.pixels[:]
+	} else {
+		return img.pixels.buf[:]
+	}
 }
