@@ -184,3 +184,47 @@ letterbox_never_stretches :: proc(t: ^testing.T) {
 		}
 	}
 }
+
+// A controller drives the menus: South opens the GAME menu, the d-pad moves,
+// South chooses, East backs out.
+@(test)
+gamepad_navigates_the_menus :: proc(t: ^testing.T) {
+	h: Harness
+	if !harness_start(t, &h) {return}
+	defer harness_stop(&h)
+	app := &h.app
+
+	testing.expect(t, app_gamepad_button(app, 0, .SOUTH), "South is used in the menu")
+	step(&h)
+	testing.expect(t, gui.menu_is_open(&app.ui), "South opens the GAME menu")
+	app_gamepad_button(app, 0, .DPAD_DOWN) // first item: LOAD
+	step(&h)
+	app_gamepad_button(app, 0, .SOUTH)
+	step(&h)
+	testing.expect(t, app.win_load.open, "choosing LOAD opens the load window")
+	app_gamepad_button(app, 0, .EAST)
+	step(&h)
+	testing.expect(t, !app.win_load.open, "East closes the window")
+	testing.expect(t, !app_gamepad_button(&h.app, 0, .LEFT_SHOULDER), "unused buttons pass through")
+}
+
+// Gamepad bindings can be changed and survive a save and reload.
+@(test)
+gamepad_bindings_round_trip :: proc(t: ^testing.T) {
+	cfg := config_defaults()
+	defer config_destroy(&cfg)
+	cfg.pad_map[1][.A] = Pad_Input(sdl.GamepadButton.NORTH)
+	cfg.pad_map[0][.L2] = PAD_NONE
+	tmp := os.get_env("TMPDIR", context.temp_allocator)
+	if tmp == "" {tmp = "/tmp"}
+	path, _ := os.join_path({tmp, "zemu-pad-test.cfg"}, context.temp_allocator)
+	testing.expect(t, config_save(&cfg, path))
+	defer os.remove(path)
+	loaded := config_defaults()
+	defer config_destroy(&loaded)
+	config_load(&loaded, path)
+	testing.expect_value(t, loaded.pad_map[1][.A], Pad_Input(sdl.GamepadButton.NORTH))
+	testing.expect_value(t, loaded.pad_map[0][.L2], PAD_NONE)
+	testing.expect_value(t, loaded.pad_map[0][.R2], PAD_RIGHT_TRIGGER)
+	testing.expect_value(t, loaded.pad_map[0][.Start], Pad_Input(sdl.GamepadButton.START))
+}
