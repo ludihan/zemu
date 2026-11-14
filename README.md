@@ -26,7 +26,7 @@ SPU2 and BIOS boot are still to come. PlayStation 3 is not planned.
 
 ## Building
 
-You need the Odin compiler (a 2026 build or newer) and SDL 3.4. zemu uses
+You need the Odin compiler (dev-2026-08 or newer; it uses the new `core:os`) and SDL 3.4. zemu uses
 Odin's vendored SDL3 bindings (`vendor:sdl3`).
 
 * **Windows:** Odin ships `SDL3.dll`; `build.bat` copies it next to the executable.
