@@ -66,9 +66,14 @@ back. You can also drag a file onto the window to load it.
 
 Default controls for player 1 are the arrow keys, **Z X A S** for B A Y X,
 **Q W** for L R, **E R** for L2 R2, **Enter** for Start and **Right Shift**
-for Select. You can remap them in *CONFIG > INPUT*. Gamepads work
-automatically with SDL's standard mapping. On a PlayStation pad, Cross is B,
-Circle is A, Square is Y and Triangle is X.
+for Select. You can remap them in *CONFIG > INPUT*.
+
+Gamepads (up to four, hot-pluggable) work automatically with SDL's standard
+mapping: on a PlayStation pad, Cross is B, Circle is A, Square is Y and
+Triangle is X; the left stick doubles as the d-pad and the triggers are L2/R2.
+Each player's pad buttons can be remapped in the same window. The Guide
+(Home/PS) button opens and closes the menu; in the menu, the d-pad moves,
+South (Cross/A) chooses and East (Circle/B) goes back.
 
 ### Cheats
 
