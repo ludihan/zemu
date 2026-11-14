@@ -15,7 +15,7 @@ ui_init_windows :: proc(app: ^App) {
 	app.win_ui      = {title = "INTERFACE", rect = {70, 50, 220, 108}}
 	app.win_sound   = {title = "SOUND", rect = {80, 60, 200, 84}}
 	app.win_paths   = {title = "PATHS", rect = {50, 70, 300, 110}}
-	app.win_about   = {title = "ABOUT", rect = {90, 50, 250, 140}}
+	app.win_about   = {title = "ABOUT", rect = {90, 50, 264, 140}}
 	app.win_message = {title = "MESSAGE", rect = {100, 80, 260, 84}}
 	for w in ([]^gui.Window{&app.win_load, &app.win_input, &app.win_video, &app.win_ui, &app.win_sound, &app.win_paths, &app.win_about, &app.win_message}) {
 		gui.add_window(ctx, w)
