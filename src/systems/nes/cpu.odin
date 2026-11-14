@@ -71,35 +71,53 @@ IRQ_VECTOR   :: 0xFFFE
 
 cpu_power_on :: proc(c: ^Console) {
 	c.cpu = {}
-	c.cpu.s = 0xFD
+	c.cpu.s = 0
 	c.cpu.p = {.Irq_Disable, .Unused}
-	c.cpu.pc = read16_untimed(c, RESET_VECTOR)
-	c.cpu.cycles = 7
+	reset_sequence(c)
 }
 
+// The reset button keeps A, X, Y and the flags (I is set); S drops by 3
+// because the reset sequence is an interrupt whose stack writes are reads.
 cpu_reset :: proc(c: ^Console) {
-	c.cpu.s -= 3
 	c.cpu.p += {.Irq_Disable}
-	c.cpu.pc = read16_untimed(c, RESET_VECTOR)
 	c.cpu.jammed = false
 	c.cpu.nmi_pending = false
+	c.cpu.nmi_take = false
+	c.cpu.irq_pending = false
+	reset_sequence(c)
 }
 
+// Seven cycles: two dummy reads, three stack "pushes" that only read, then
+// the vector.
 @(private = "file")
-read16_untimed :: proc(c: ^Console, addr: u16) -> u16 {
-	return u16(bus_read(c, addr)) | u16(bus_read(c, addr + 1)) << 8
+reset_sequence :: proc(c: ^Console) {
+	cpu := &c.cpu
+	_ = read(c, cpu.pc)
+	_ = read(c, cpu.pc)
+	for _ in 0 ..< 3 {
+		_ = read(c, 0x100 | u16(cpu.s))
+		cpu.s -= 1
+	}
+	lo := u16(read(c, RESET_VECTOR))
+	cpu.pc = lo | u16(read(c, RESET_VECTOR + 1)) << 8
 }
 
 // --- timed bus access ------------------------------------------------------
 
 read :: #force_inline proc(c: ^Console, addr: u16) -> u8 {
-	tick(c)
-	return bus_read(c, addr)
+	if c.dma.need_halt {
+		process_dma(c, addr)
+	}
+	cycle_start(c, true)
+	v := bus_read(c, addr)
+	cycle_end(c, true)
+	return v
 }
 
 write :: #force_inline proc(c: ^Console, addr: u16, value: u8) {
-	tick(c)
+	cycle_start(c, false)
 	bus_write(c, addr, value)
+	cycle_end(c, false)
 }
 
 @(private = "file")
@@ -240,10 +258,16 @@ branch :: proc(c: ^Console, taken: bool) {
 		return
 	}
 	cpu := &c.cpu
+	irq_before := cpu.poll_irq // IRQ line at the end of the opcode cycle
 	_ = read(c, cpu.pc)
 	target := u16(i16(cpu.pc) + i16(offset))
 	if (target & 0xFF00) != (cpu.pc & 0xFF00) {
 		_ = read(c, (cpu.pc & 0xFF00) | (target & 0x00FF))
+	} else if cpu.poll_irq && !irq_before {
+		// A taken branch that stays on its page does not poll during its last
+		// cycle: an IRQ that rose during the operand fetch waits one more
+		// instruction.
+		cpu.poll_irq = false
 	}
 	cpu.pc = target
 }
@@ -259,16 +283,17 @@ interrupt :: proc(c: ^Console, vector: u16, is_brk: bool) {
 	}
 	push(c, u8(cpu.pc >> 8))
 	push(c, u8(cpu.pc))
-	flags := cpu.p + {.Unused}
-	if is_brk {flags += {.Break}} else {flags -= {.Break}}
-	push(c, transmute(u8)flags)
-	cpu.p += {.Irq_Disable}
-	// An NMI arriving during BRK/IRQ hijacks the vector.
+	// An NMI detected by now (before the flags are pushed) hijacks the
+	// BRK/IRQ sequence and takes its vector instead.
 	v := vector
 	if c.cpu.nmi_pending && vector != NMI_VECTOR {
 		v = NMI_VECTOR
 		c.cpu.nmi_pending = false
 	}
+	flags := cpu.p + {.Unused}
+	if is_brk {flags += {.Break}} else {flags -= {.Break}}
+	push(c, transmute(u8)flags)
+	cpu.p += {.Irq_Disable}
 	lo := u16(read(c, v))
 	cpu.pc = lo | u16(read(c, v + 1)) << 8
 }
@@ -276,9 +301,6 @@ interrupt :: proc(c: ^Console, vector: u16, is_brk: bool) {
 // Executes one instruction (or services one pending interrupt).
 cpu_step :: proc(c: ^Console) {
 	cpu := &c.cpu
-	if c.dmc_stall > 0 {
-		flush_dmc_stall(c)
-	}
 	if cpu.jammed {
 		tick(c)
 		return
@@ -309,6 +331,11 @@ cpu_step :: proc(c: ^Console) {
 	}
 	cpu.irq_pending = !i_flag && cpu.poll_irq
 	cpu.nmi_take = cpu.poll_nmi
+	if op == 0x00 {
+		// BRK does not poll at its end: an NMI that arrives during its last
+		// cycles is taken after the handler's first instruction.
+		cpu.nmi_take = false
+	}
 }
 
 @(private = "file")
