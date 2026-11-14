@@ -93,6 +93,7 @@ System_Kind :: enum u8 {
 	NES,
 	SNES,
 	PSX,
+	GB,
 }
 
 System_Info :: struct {
@@ -131,6 +132,14 @@ SYSTEM_INFO := [System_Kind]System_Info {
 		sample_rate = 44100,
 		aspect      = 4.0 / 3.0,
 		needs_bios  = true,
+	},
+	.GB = {
+		name        = "Game Boy / Game Boy Color",
+		short_name  = "GB",
+		extensions  = {".gb", ".gbc"},
+		fps         = 59.7275,
+		sample_rate = 48000,
+		aspect      = 10.0 / 9.0,
 	},
 }
 
