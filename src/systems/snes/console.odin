@@ -19,6 +19,7 @@ Console :: struct {
 	ppu:        Ppu,
 	spc:        Spc,
 	cart:       Cartridge,
+	gsu:        Gsu,
 	dma:        [8]Dma_Channel,
 	wram:       [0x20000]u8,
 	wram_addr:  u32,
@@ -107,6 +108,7 @@ reset :: proc(c: ^Console) {
 	c.pending = 0
 	c.apu_debt = 0
 	c.line_done = false
+	gsu_reset(&c.gsu)
 	cpu_reset(c)
 }
 
@@ -172,6 +174,9 @@ raise_irq :: proc(c: ^Console) {
 @(private = "file")
 advance :: proc(c: ^Console, cycles: int) {
 	run_apu(c, cycles)
+	if c.cart.coproc == .Super_FX {
+		gsu_run(c, cycles)
+	}
 	remaining := cycles
 	for remaining > 0 {
 		// step to the next event on this line (H-IRQ, HBlank work, line end)
@@ -370,6 +375,8 @@ bus_read :: proc(c: ^Console, addr: u32) -> u8 {
 		v = io_read(c, a)
 	case bank & 0x40 == 0 && a >= 0x4300 && a < 0x4380:
 		v = dma_read_reg(c, a)
+	case c.cart.coproc == .Super_FX && bank & 0x40 == 0 && a >= 0x3000 && a < 0x3300:
+		v = gsu_reg_read(c, a)
 	case:
 		if cv, ok := cart_read(&c.cart, bank, a); ok {
 			v = cv
@@ -415,6 +422,8 @@ bus_write :: proc(c: ^Console, addr: u32, v: u8) {
 		io_write(c, a, v)
 	case bank & 0x40 == 0 && a >= 0x4300 && a < 0x4380:
 		dma_write_reg(c, a, v)
+	case c.cart.coproc == .Super_FX && bank & 0x40 == 0 && a >= 0x3000 && a < 0x3300:
+		gsu_reg_write(c, a, v)
 	case:
 		cart_write(&c.cart, bank, a, v)
 	}
@@ -432,7 +441,7 @@ io_read :: proc(c: ^Console, a: u16) -> u8 {
 		v := c.open_bus & 0x7F
 		if c.irq_flag {v |= 0x80}
 		c.irq_flag = false
-		c.cpu.irq_line = false
+		c.cpu.irq_line = c.gsu.irq // a Super FX IRQ stays asserted
 		return v
 	case 0x4212:
 		v := c.open_bus & 0x3E
@@ -463,7 +472,7 @@ io_write :: proc(c: ^Console, a: u16, v: u8) {
 		}
 		if v & 0x30 == 0 {
 			c.irq_flag = false
-			c.cpu.irq_line = false
+			c.cpu.irq_line = c.gsu.irq // a Super FX IRQ stays asserted
 		}
 	case 0x4201:
 		if v & 0x80 == 0 {

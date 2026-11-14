@@ -9,7 +9,13 @@ Map_Mode :: enum u8 {
 	Ex_Hi_Rom,
 }
 
+Coprocessor :: enum u8 {
+	None,
+	Super_FX,
+}
+
 Cartridge :: struct {
+	coproc:    Coprocessor,
 	rom:       []u8,
 	sram:      []u8,
 	sram_mask: int,
@@ -87,15 +93,21 @@ cart_load :: proc(cart: ^Cartridge, image: []u8, allocator := context.allocator)
 	country := h[0x19]
 	cart.pal = (country >= 2 && country <= 12) || country == 17
 
-	// $FFD6: low nibble 3-6 means a coprocessor (DSP-n, SuperFX, SA-1, ...)
-	// sits on the cartridge. None of them are emulated, and the games do not
-	// run without them, so refuse instead of crashing mysteriously later.
+	// $FFD6: low nibble 3-6 means a coprocessor sits on the cartridge; the
+	// high nibble says which. The Super FX is emulated; games that need any
+	// other chip (DSP-n, SA-1, Cx4, ...) are refused rather than left to
+	// crash mysteriously.
 	chip := h[0x16]
-	if chip & 0x0F >= 3 && chip & 0x0F <= 6 {
+	switch {
+	case chip >= 0x13 && chip <= 0x15, chip == 0x1A:
+		cart.coproc = .Super_FX
+		cart.map_mode = .Lo_Rom
+		cart.battery = chip == 0x15 || chip == 0x1A
+	case chip & 0x0F >= 3 && chip & 0x0F <= 6:
 		return .Unsupported_Chip
 	}
 	switch chip & 0x0F {
-	case 0x02, 0x05, 0x06: cart.battery = true
+	case 0x02, 0x05, 0x06: cart.battery = cart.battery || cart.coproc == .None
 	}
 
 	err: runtime.Allocator_Error
@@ -107,6 +119,11 @@ cart_load :: proc(cart: ^Cartridge, image: []u8, allocator := context.allocator)
 
 	ram_kb := h[0x18]
 	sram_size := ram_kb > 0 && ram_kb <= 8 ? 1024 << ram_kb : 0
+	if cart.coproc == .Super_FX {
+		// Super FX RAM: the expansion RAM size at $FFBD, when present.
+		exp := header >= 3 ? data[header - 3] : 0
+		sram_size = exp >= 1 && exp <= 7 ? 1024 << exp : 0x10000
+	}
 	if sram_size > 0 {
 		cart.sram, err = make([]u8, sram_size, allocator)
 		if err != nil {
@@ -164,6 +181,20 @@ rom_byte :: #force_inline proc(cart: ^Cartridge, offset: int) -> u8 {
 cart_read :: proc(cart: ^Cartridge, bank: u8, addr: u16) -> (value: u8, ok: bool) {
 	b := int(bank)
 	a := int(addr)
+	if cart.coproc == .Super_FX {
+		bb := b & 0x7F
+		switch {
+		case bb < 0x40 && a >= 0x8000:
+			return rom_byte(cart, bb * 0x8000 + (a - 0x8000)), true
+		case bb < 0x40 && a >= 0x6000 && len(cart.sram) > 0:
+			return cart.sram[(a - 0x6000) & cart.sram_mask], true
+		case bb >= 0x40 && bb < 0x60:
+			return rom_byte(cart, (bb - 0x40) * 0x10000 + a), true
+		case (bb == 0x70 || bb == 0x71) && len(cart.sram) > 0:
+			return cart.sram[((bb & 1) * 0x10000 + a) & cart.sram_mask], true
+		}
+		return 0, false
+	}
 	switch cart.map_mode {
 	case .Lo_Rom:
 		if a >= 0x8000 {
@@ -199,6 +230,16 @@ cart_write :: proc(cart: ^Cartridge, bank: u8, addr: u16, value: u8) {
 	}
 	b := int(bank)
 	a := int(addr)
+	if cart.coproc == .Super_FX {
+		bb := b & 0x7F
+		switch {
+		case bb < 0x40 && a >= 0x6000 && a < 0x8000:
+			cart.sram[(a - 0x6000) & cart.sram_mask] = value
+		case bb == 0x70 || bb == 0x71:
+			cart.sram[((bb & 1) * 0x10000 + a) & cart.sram_mask] = value
+		}
+		return
+	}
 	switch cart.map_mode {
 	case .Lo_Rom:
 		if a < 0x8000 && (b & 0x7F) >= 0x70 && (b & 0x7F) <= 0x7D {
