@@ -364,3 +364,41 @@ pal_apu_suite :: proc(t: ^testing.T) {
 		destroy(c)
 	}
 }
+
+// Older blargg tests that only print their verdict on screen.
+@(test)
+blargg_screen_tests :: proc(t: ^testing.T) {
+	dir, ok := test_rom_dir()
+	if !ok {
+		log.warn("ZEMU_NES_TESTS not set")
+		return
+	}
+	roms := []string {
+		"sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes",
+		"sprdma_and_dmc_dma/sprdma_and_dmc_dma_512.nes",
+	}
+	for r in roms {
+		rom, err := os.read_entire_file(fmt.tprintf("%s/%s", dir, r), context.allocator)
+		if err != nil {
+			log.warnf("missing %s", r)
+			continue
+		}
+		c, load_err := create(rom)
+		delete(rom)
+		if load_err != .None {
+			log.errorf("%s: %v", r, load_err)
+			continue
+		}
+		for _ in 0 ..< 600 {
+			run_frame(c, {}, nil)
+		}
+		// the first nametable, as text
+		screen: [960]u8
+		for b, i in c.vram[:960] {
+			screen[i] = b >= 0x20 && b < 0x7F ? b : ' '
+		}
+		text := string(screen[:])
+		testing.expectf(t, strings.contains(text, "Passed"), "%s: %s", r, strings.trim_space(text))
+		destroy(c)
+	}
+}
