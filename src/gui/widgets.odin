@@ -347,3 +347,83 @@ binding :: proc(ctx: ^Context, r: Rect, s: string, waiting: bool) -> bool {
 	text_fit(ctx, sr.x + 3, sr.y + (sr.h - CELL_H) / 2 + 1, sr.w - 5, shown, waiting ? t.selection_text : t.text)
 	return clicked(ctx, sr)
 }
+
+// --- text field --------------------------------------------------------------
+
+Text_Field :: struct {
+	buf: [96]u8,
+	len: int,
+}
+
+text_field_string :: proc(f: ^Text_Field) -> string {
+	return string(f.buf[:f.len])
+}
+
+text_field_clear :: proc(f: ^Text_Field) {
+	f.len = 0
+}
+
+// A single-line text input. Click to focus; typing appends, Backspace
+// deletes, Enter returns true (submit), Esc drops focus.
+text_field :: proc(ctx: ^Context, f: ^Text_Field, r: Rect, placeholder := "") -> (submitted: bool) {
+	t := &ctx.theme
+	s := to_screen(ctx, r)
+	focused := ctx.text_focus == f
+	if ctx.mouse_pressed && has_mouse(ctx) {
+		if rect_contains(s, ctx.mouse) {
+			ctx.text_focus = f
+			focused = true
+		} else if focused {
+			ctx.text_focus = nil
+			focused = false
+		}
+	}
+	if focused && !has_keyboard(ctx) {
+		ctx.text_focus = nil
+		focused = false
+	}
+	if focused {
+		for ch in typed_text(ctx) {
+			if ch >= 0x20 && ch < 0x7F && f.len < len(f.buf) {
+				f.buf[f.len] = u8(ch)
+				f.len += 1
+			}
+		}
+		for k in keys(ctx) {
+			#partial switch k.scancode {
+			case .BACKSPACE:
+				if f.len > 0 {f.len -= 1}
+			case .RETURN, .KP_ENTER:
+				submitted = true
+			case .ESCAPE:
+				ctx.text_focus = nil
+			}
+		}
+		consume_keys(ctx)
+		ctx.text_len = 0
+	}
+
+	fill_rect(ctx, s, t.field)
+	bevel(ctx, s, t.border_dark, t.border_light)
+	if focused {
+		outline_rect(ctx, rect_inset(s, -1), t.text_hot)
+	}
+	str := text_field_string(f)
+	ty := s.y + (s.h - CELL_H) / 2 + 1
+	if len(str) == 0 && !focused {
+		text(ctx, s.x + 3, ty, placeholder, t.text_dim)
+	} else {
+		// keep the end (and the cursor) visible
+		max_chars := int((s.w - 8) / CELL_W)
+		shown := str
+		if len(shown) > max_chars && max_chars > 0 {
+			shown = shown[len(shown) - max_chars:]
+		}
+		text_shadowed(ctx, s.x + 3, ty, shown, t.text)
+		if focused && int(ctx.time * 2) % 2 == 0 {
+			cx := s.x + 3 + text_width(shown)
+			fill_rect(ctx, {cx, ty - 1, 1, CELL_H - 1}, t.text_hot)
+		}
+	}
+	return
+}

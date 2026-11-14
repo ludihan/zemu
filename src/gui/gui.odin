@@ -73,6 +73,9 @@ Context :: struct {
 	// True while an overlay (the open menu) owns the mouse.
 	capture_mouse:  bool,
 	menu:           Menu_State,
+	// The text field that has keyboard focus (nil when none). While set, the
+	// application should not treat key presses as shortcuts.
+	text_focus:     ^Text_Field,
 }
 
 init :: proc(ctx: ^Context, renderer: ^sdl.Renderer) -> bool {
