@@ -19,10 +19,25 @@ Console :: struct {
 
 	audio:     ^emu.Audio_Buffer, // only set while `run_frame` is running
 	fingerprint: u64, // hash of the ROM image, ties save states to the game
+	pal:       bool,
+	dot_frac:  u8, // PAL runs 3.2 PPU dots per CPU cycle: one extra every 5
 }
 
-// Creates a console from an iNES image. Returns nil and an error on failure.
-create :: proc(rom: []u8, allocator := context.allocator) -> (^Console, emu.Load_Error) {
+// True when the header marks the image as a PAL (European) release.
+header_is_pal :: proc(rom: []u8) -> bool {
+	if len(rom) < 16 {
+		return false
+	}
+	if rom[7] & 0x0C == 0x08 {
+		return rom[12] & 3 == 1 // NES 2.0 timing field
+	}
+	clean := rom[12] | rom[13] | rom[14] | rom[15] == 0
+	return clean && rom[9] & 1 != 0
+}
+
+// Creates a console from an iNES image. `pal` forces PAL timing; otherwise
+// the header decides. Returns nil and an error on failure.
+create :: proc(rom: []u8, pal := false, allocator := context.allocator) -> (^Console, emu.Load_Error) {
 	c, alloc_err := new(Console, allocator)
 	if alloc_err != nil {
 		return nil, .Out_Of_Memory
@@ -32,6 +47,9 @@ create :: proc(rom: []u8, allocator := context.allocator) -> (^Console, emu.Load
 		return nil, err
 	}
 	c.fingerprint = emu.fingerprint(rom)
+	c.pal = pal || header_is_pal(rom)
+	c.ppu.pal = c.pal
+	c.apu.pal = c.pal
 	power_on(c)
 	return c, .None
 }
@@ -89,6 +107,10 @@ frame :: proc(c: ^Console, crop_overscan: bool) -> emu.Frame {
 }
 
 // Battery-backed RAM to persist, or nil when the cartridge has none.
+fps :: proc(c: ^Console) -> f64 {
+	return c.pal ? 50.0070 : 60.0988
+}
+
 save_ram :: proc(c: ^Console) -> []u8 {
 	return c.cart.battery ? c.cart.prg_ram[:] : nil
 }
@@ -107,6 +129,13 @@ tick :: proc(c: ^Console) {
 	ppu_step(c)
 	ppu_step(c)
 	ppu_step(c)
+	if c.pal {
+		c.dot_frac += 1
+		if c.dot_frac == 5 {
+			c.dot_frac = 0
+			ppu_step(c)
+		}
+	}
 	cart_cpu_clock(&c.cart)
 	apu_step(c)
 

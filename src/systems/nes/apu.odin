@@ -2,8 +2,9 @@ package nes
 
 import "../../emu"
 
-CPU_CLOCK   :: 1_789_773.0
-SAMPLE_RATE :: 48000
+CPU_CLOCK     :: 1_789_773.0
+CPU_CLOCK_PAL :: 1_662_607.0
+SAMPLE_RATE   :: 48000
 
 @(rodata, private = "file")
 LENGTH_TABLE := [32]u8 {
@@ -26,10 +27,24 @@ TRIANGLE_TABLE := [32]u8 {
 }
 
 @(rodata, private = "file")
-NOISE_PERIODS := [16]u16 {4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068}
+NOISE_PERIODS := [2][16]u16 {
+	{4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068},
+	{4, 8, 14, 30, 60, 88, 118, 148, 188, 236, 354, 472, 708, 944, 1890, 3778}, // PAL
+}
 
 @(rodata, private = "file")
-DMC_RATES := [16]u16 {428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54}
+DMC_RATES := [2][16]u16 {
+	{428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54},
+	{398, 354, 316, 298, 276, 236, 210, 198, 176, 148, 132, 118, 98, 78, 66, 50}, // PAL
+}
+
+// Frame counter steps in CPU cycles: quarter, half, quarter, IRQ, last,
+// IRQ end (4-step), and the 5-step mode's last step and wrap.
+@(rodata, private = "file")
+FRAME_STEPS := [2][8]u32 {
+	{7457, 14913, 22371, 29828, 29829, 29830, 37281, 37282},
+	{8313, 16627, 24939, 33252, 33253, 33254, 41565, 41566}, // PAL
+}
 
 Envelope :: struct {
 	start:   bool,
@@ -117,6 +132,14 @@ Apu :: struct {
 	hp_prev_in:   f32,
 	hp_prev_out:  f32,
 	lp_out:       f32,
+	pal:          bool,
+	// Length reloads and halt-flag changes land after the current cycle's
+	// length clock (index: pulse 1, pulse 2, triangle, noise).
+	pending_reload: [4]u8,
+	reload_dirty:   [4]bool,
+	pending_halt:   [4]bool,
+	halt_dirty:     [4]bool,
+	length_clocked: bool,
 }
 
 @(private = "file")
@@ -134,11 +157,18 @@ build_mixer_tables :: proc "contextless" () {
 	}
 }
 
+@(private = "file")
+region :: #force_inline proc(a: ^Apu) -> int {
+	return a.pal ? 1 : 0
+}
+
 apu_reset :: proc(a: ^Apu) {
+	pal := a.pal
 	a^ = {}
+	a.pal = pal
 	a.noise.shift = 1
-	a.noise.period = NOISE_PERIODS[0]
-	a.dmc.rate = DMC_RATES[0]
+	a.noise.period = NOISE_PERIODS[region(a)][0]
+	a.dmc.rate = DMC_RATES[region(a)][0]
 	a.dmc.silent = true
 	a.dmc.bits = 8
 	a.pulse[0].ones_complement = true
@@ -153,7 +183,8 @@ apu_write :: proc(a: ^Apu, addr: u16, v: u8) {
 		switch addr & 3 {
 		case 0:
 			p.duty = v >> 6
-			p.env.loop = v & 0x20 != 0
+			a.pending_halt[(addr >> 2) & 1] = v & 0x20 != 0
+			a.halt_dirty[(addr >> 2) & 1] = true
 			p.env.constant = v & 0x10 != 0
 			p.env.volume = v & 0x0F
 		case 1:
@@ -166,33 +197,44 @@ apu_write :: proc(a: ^Apu, addr: u16, v: u8) {
 			p.period = (p.period & 0x700) | u16(v)
 		case 3:
 			p.period = (p.period & 0x0FF) | (u16(v & 7) << 8)
-			if p.enabled {p.length = LENGTH_TABLE[v >> 3]}
+			if p.enabled {
+				a.pending_reload[(addr >> 2) & 1] = LENGTH_TABLE[v >> 3]
+				a.reload_dirty[(addr >> 2) & 1] = true
+			}
 			p.step = 0
 			p.env.start = true
 		}
 	case 0x4008:
-		a.triangle.control = v & 0x80 != 0
+		a.pending_halt[2] = v & 0x80 != 0
+		a.halt_dirty[2] = true
 		a.triangle.linear_reload_value = v & 0x7F
 	case 0x400A:
 		a.triangle.period = (a.triangle.period & 0x700) | u16(v)
 	case 0x400B:
 		a.triangle.period = (a.triangle.period & 0x0FF) | (u16(v & 7) << 8)
-		if a.triangle.enabled {a.triangle.length = LENGTH_TABLE[v >> 3]}
+		if a.triangle.enabled {
+			a.pending_reload[2] = LENGTH_TABLE[v >> 3]
+			a.reload_dirty[2] = true
+		}
 		a.triangle.linear_reload = true
 	case 0x400C:
-		a.noise.env.loop = v & 0x20 != 0
+		a.pending_halt[3] = v & 0x20 != 0
+		a.halt_dirty[3] = true
 		a.noise.env.constant = v & 0x10 != 0
 		a.noise.env.volume = v & 0x0F
 	case 0x400E:
 		a.noise.mode = v & 0x80 != 0
-		a.noise.period = NOISE_PERIODS[v & 0x0F]
+		a.noise.period = NOISE_PERIODS[region(a)][v & 0x0F]
 	case 0x400F:
-		if a.noise.enabled {a.noise.length = LENGTH_TABLE[v >> 3]}
+		if a.noise.enabled {
+			a.pending_reload[3] = LENGTH_TABLE[v >> 3]
+			a.reload_dirty[3] = true
+		}
 		a.noise.env.start = true
 	case 0x4010:
 		a.dmc.irq_enabled = v & 0x80 != 0
 		a.dmc.loop = v & 0x40 != 0
-		a.dmc.rate = DMC_RATES[v & 0x0F]
+		a.dmc.rate = DMC_RATES[region(a)][v & 0x0F]
 		if !a.dmc.irq_enabled {a.dmc.irq = false}
 	case 0x4011:
 		a.dmc.output = v & 0x7F
@@ -297,6 +339,7 @@ quarter_frame :: proc(a: ^Apu) {
 
 @(private = "file")
 half_frame :: proc(a: ^Apu) {
+	a.length_clocked = true
 	for &p in a.pulse {
 		if p.length > 0 && !p.env.loop {p.length -= 1}
 		if p.sweep_divider == 0 && p.sweep_enabled && p.sweep_shift > 0 && !pulse_muted(&p) {
@@ -327,27 +370,25 @@ step_frame_counter :: proc(a: ^Apu) {
 		}
 	}
 	a.frame_cycle += 1
+	st := &FRAME_STEPS[region(a)]
 	if !a.frame_mode5 {
 		switch a.frame_cycle {
-		case 7457:  quarter_frame(a)
-		case 14913: quarter_frame(a); half_frame(a)
-		case 22371: quarter_frame(a)
-		case 29828: if !a.frame_irq_inhibit {a.frame_irq = true}
-		case 29829:
+		case st[0], st[2]: quarter_frame(a)
+		case st[1]: quarter_frame(a); half_frame(a)
+		case st[3]: if !a.frame_irq_inhibit {a.frame_irq = true}
+		case st[4]:
 			quarter_frame(a)
 			half_frame(a)
 			if !a.frame_irq_inhibit {a.frame_irq = true}
-		case 29830:
+		case st[5]:
 			if !a.frame_irq_inhibit {a.frame_irq = true}
 			a.frame_cycle = 0
 		}
 	} else {
 		switch a.frame_cycle {
-		case 7457:  quarter_frame(a)
-		case 14913: quarter_frame(a); half_frame(a)
-		case 22371: quarter_frame(a)
-		case 37281: quarter_frame(a); half_frame(a)
-		case 37282: a.frame_cycle = 0
+		case st[0], st[2]: quarter_frame(a)
+		case st[1], st[6]: quarter_frame(a); half_frame(a)
+		case st[7]: a.frame_cycle = 0
 		}
 	}
 }
@@ -392,7 +433,32 @@ apu_step :: proc(c: ^Console) {
 	}
 
 	step_dmc(c)
+	apply_pending_length(a)
 	mix_sample(c)
+}
+
+// A reload written on the cycle the counter is clocked is dropped if the
+// counter was non-zero; halt changes take effect after the clock.
+@(private = "file")
+apply_pending_length :: proc(a: ^Apu) {
+	lengths := [4]^u8{&a.pulse[0].length, &a.pulse[1].length, &a.triangle.length, &a.noise.length}
+	for i in 0 ..< 4 {
+		if a.reload_dirty[i] {
+			a.reload_dirty[i] = false
+			if !(a.length_clocked && lengths[i]^ != 0) {
+				lengths[i]^ = a.pending_reload[i]
+			}
+		}
+		if a.halt_dirty[i] {
+			a.halt_dirty[i] = false
+			switch i {
+			case 0, 1: a.pulse[i].env.loop = a.pending_halt[i]
+			case 2:    a.triangle.control = a.pending_halt[i]
+			case 3:    a.noise.env.loop = a.pending_halt[i]
+			}
+		}
+	}
+	a.length_clocked = false
 }
 
 @(private = "file")
@@ -458,11 +524,12 @@ mix_sample :: proc(c: ^Console) {
 
 	a.sample_acc += pulse + tnd + cart_audio(&c.cart)
 	a.sample_count += 1
+	clock := a.pal ? CPU_CLOCK_PAL : CPU_CLOCK
 	a.sample_phase += SAMPLE_RATE
-	if a.sample_phase < CPU_CLOCK {
+	if a.sample_phase < clock {
 		return
 	}
-	a.sample_phase -= CPU_CLOCK
+	a.sample_phase -= clock
 	s := a.sample_acc / a.sample_count
 	a.sample_acc = 0
 	a.sample_count = 0

@@ -5,7 +5,8 @@ package nes
 SCREEN_WIDTH  :: 256
 SCREEN_HEIGHT :: 240
 
-PRERENDER_LINE :: 261
+PRERENDER_LINE     :: 261
+PRERENDER_LINE_PAL :: 311
 SPRITE_FETCH_DOT :: 260
 VBLANK_LINE    :: 241
 
@@ -30,6 +31,7 @@ Ppu :: struct {
 	scanline:    int,
 	dot:         int,
 	odd_frame:   bool,
+	pal:         bool, // 312 lines, no skipped dot, red/green emphasis swapped
 	frame_ready: bool,
 	frame_count: u64,
 	dots:        u64, // free-running dot counter (for mapper A12 timing)
@@ -53,6 +55,21 @@ ppu_reset :: proc(p: ^Ppu) {
 	p.scanline = 0
 	p.dot = 0
 	p.odd_frame = false
+}
+
+@(private = "file")
+prerender_line :: #force_inline proc(p: ^Ppu) -> int {
+	return p.pal ? PRERENDER_LINE_PAL : PRERENDER_LINE
+}
+
+// PAL consoles swap the red and green emphasis bits.
+@(private = "file")
+emphasis_bits :: #force_inline proc(p: ^Ppu) -> int {
+	e := int(p.mask >> 5)
+	if p.pal {
+		e = (e & 4) | (e & 1) << 1 | (e >> 1) & 1
+	}
+	return e
 }
 
 @(private = "file")
@@ -380,15 +397,14 @@ render_pixel :: proc(c: ^Console) {
 	if p.mask & 0x01 != 0 {
 		color &= 0x30
 	}
-	emphasis := int(p.mask >> 5)
-	p.framebuffer[p.scanline * SCREEN_WIDTH + x] = PALETTE[emphasis][color & 0x3F]
+	p.framebuffer[p.scanline * SCREEN_WIDTH + x] = PALETTE[emphasis_bits(p)][color & 0x3F]
 }
 
 ppu_step :: proc(c: ^Console) {
 	p := &c.ppu
 	p.dots += 1
 	visible := p.scanline < 240
-	prerender := p.scanline == PRERENDER_LINE
+	prerender := p.scanline == prerender_line(p)
 	rendering := rendering_enabled(p)
 
 	if rendering && (visible || prerender) {
@@ -431,8 +447,7 @@ ppu_step :: proc(c: ^Console) {
 		} else {
 			// Backdrop (or palette entry pointed at by v when it is in $3F00-$3FFF).
 			idx := p.v & 0x3F00 == 0x3F00 ? palette_index(p.v) : 0
-			emphasis := int(p.mask >> 5)
-			p.framebuffer[p.scanline * SCREEN_WIDTH + p.dot - 1] = PALETTE[emphasis][p.palette[idx] & 0x3F]
+			p.framebuffer[p.scanline * SCREEN_WIDTH + p.dot - 1] = PALETTE[emphasis_bits(p)][p.palette[idx] & 0x3F]
 		}
 	}
 
@@ -452,14 +467,14 @@ ppu_step :: proc(c: ^Console) {
 	}
 
 	// Advance. Odd frames skip the last pre-render dot when rendering.
-	if prerender && p.dot == 339 && p.odd_frame && rendering {
+	if prerender && p.dot == 339 && p.odd_frame && rendering && !p.pal {
 		p.dot = 340
 	}
 	p.dot += 1
 	if p.dot > 340 {
 		p.dot = 0
 		p.scanline += 1
-		if p.scanline > PRERENDER_LINE {
+		if p.scanline > prerender_line(p) {
 			p.scanline = 0
 			p.odd_frame = !p.odd_frame
 		}

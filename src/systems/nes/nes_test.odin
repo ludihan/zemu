@@ -310,3 +310,29 @@ vrc6_audio_produces_output :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, high > 600 && high < 1400, "pulse should be on about half the time")
 }
+
+@(test)
+pal_apu_suite :: proc(t: ^testing.T) {
+	dir, ok := test_rom_dir()
+	if !ok {
+		log.warn("ZEMU_NES_TESTS not set")
+		return
+	}
+	roms := []string {
+		"01.len_ctr.nes", "02.len_table.nes", "03.irq_flag.nes", "04.clock_jitter.nes",
+		"05.len_timing_mode0.nes", "06.len_timing_mode1.nes", "07.irq_flag_timing.nes",
+		"08.irq_timing.nes", "10.len_halt_timing.nes", "11.len_reload_timing.nes",
+	}
+	for r in roms {
+		rom, err := os.read_entire_file(fmt.tprintf("%s/pal_apu_tests/%s", dir, r), context.allocator)
+		if !testing.expectf(t, err == nil, "missing %s", r) {continue}
+		c, _ := create(rom, pal = true)
+		delete(rom)
+		// These older tests leave their result code in $F8 (1 = passed).
+		for _ in 0 ..< 900 {
+			run_frame(c, {}, nil)
+		}
+		testing.expectf(t, c.ram[0xF8] == 1, "%s: result %d", r, c.ram[0xF8])
+		destroy(c)
+	}
+}
