@@ -266,11 +266,24 @@ dma_trigger :: proc(c: ^Console, timing: u16) {
 	for i in 0 ..< 4 {
 		d := &c.dma[i]
 		if d.control & 0x8000 != 0 && (d.control >> 12) & 3 == timing {
-			if timing == DMA_SPECIAL && (i == 0 || i == 3) {
-				continue // video capture (DMA3) is not emulated
+			if timing == DMA_SPECIAL {
+				continue // FIFO (DMA1/2) and video capture (DMA3) have their own triggers
 			}
 			dma_run(c, i)
 		}
+	}
+}
+
+// Video capture: DMA3 in special mode runs once per line during HBlank on
+// lines 2-161 and is switched off at line 162.
+dma_video_capture :: proc(c: ^Console, line: int) {
+	d := &c.dma[3]
+	if d.control & 0x8000 == 0 || (d.control >> 12) & 3 != DMA_SPECIAL {
+		return
+	}
+	switch {
+	case line >= 2 && line < 162: dma_run(c, 3)
+	case line == 162: d.control &= 0x7FFF
 	}
 }
 
