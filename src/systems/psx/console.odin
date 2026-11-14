@@ -244,7 +244,6 @@ REGION_MASK := [8]u32 {
 	0xFFFF_FFFF, 0xFFFF_FFFF, // KSEG2
 }
 
-@(private = "file")
 physical :: #force_inline proc(addr: u32) -> u32 {
 	return addr & REGION_MASK[addr >> 29]
 }

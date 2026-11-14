@@ -125,6 +125,13 @@ cpu_step :: proc(c: ^Console) -> int {
 		raise_exception(c, .Address_Load)
 		return 2
 	}
+	// The scratchpad, the interrupt registers and the MDEC do not answer
+	// instruction fetches (other I/O ports do, with the register value).
+	switch physical(pc) {
+	case 0x1F80_0000 ..< 0x1F80_0400, 0x1F80_1070 ..< 0x1F80_1080, 0x1F80_1820 ..< 0x1F80_1830:
+		raise_exception(c, .Bus_Fetch)
+		return 2
+	}
 	op := fetch_word(c, pc)
 
 	cpu.in_delay = cpu.branch
