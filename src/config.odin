@@ -42,6 +42,7 @@ Config :: struct {
 	rom_dir:       string,
 	psx_bios:      string,
 	keys:          [emu.MAX_PADS]Key_Map,
+	pad_map:       [emu.MAX_PADS]Pad_Map,
 	recent:        [dynamic]string,
 }
 
@@ -110,6 +111,7 @@ config_defaults :: proc() -> Config {
 		rewind        = true,
 		volume        = 80,
 		keys          = {DEFAULT_KEYS_P1, DEFAULT_KEYS_P2},
+		pad_map       = {DEFAULT_PAD_MAP, DEFAULT_PAD_MAP},
 	}
 }
 
@@ -204,15 +206,22 @@ config_load :: proc(c: ^Config, path: string) {
 				append(&c.recent, strings.clone(value))
 			}
 		case:
-			// "p1.up = Up"
+			// "p1.up = Up" (keyboard), "p1.pad.up = dpup" (gamepad)
 			if len(key) > 3 && key[0] == 'p' && key[2] == '.' {
 				pad := int(key[1] - '1')
 				if pad < 0 || pad >= emu.MAX_PADS {
 					continue
 				}
+				field := key[3:]
+				gamepad := strings.has_prefix(field, "pad.")
+				if gamepad {field = field[4:]}
 				for name, b in BUTTON_NAMES {
-					if strings.equal_fold(name, key[3:]) {
-						c.keys[pad][b] = scancode_from_name(value)
+					if strings.equal_fold(name, field) {
+						if gamepad {
+							c.pad_map[pad][b] = pad_input_from_name(value)
+						} else {
+							c.keys[pad][b] = scancode_from_name(value)
+						}
 					}
 				}
 			}
@@ -244,6 +253,9 @@ config_save :: proc(c: ^Config, path: string) -> bool {
 	for pad in 0 ..< emu.MAX_PADS {
 		for name, btn in BUTTON_NAMES {
 			fmt.sbprintfln(&b, "p%d.%s = %s", pad + 1, name, scancode_name(c.keys[pad][btn]))
+		}
+		for name, btn in BUTTON_NAMES {
+			fmt.sbprintfln(&b, "p%d.pad.%s = %s", pad + 1, name, pad_input_name(c.pad_map[pad][btn]))
 		}
 	}
 	for r in c.recent {
