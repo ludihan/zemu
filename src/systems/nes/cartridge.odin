@@ -58,10 +58,22 @@ Cartridge :: struct {
 	latch:      u8, // simple discrete-logic mappers
 	mmc1:       Mmc1,
 	mmc3:       Mmc3,
-	mmc2:       Mmc2,
+	mmc2:       Mmc2, // also MMC4
+	mmc5:       Mmc5,
+	vrc:        Vrc,
+	vrc6:       Vrc6,
+	fme7:       Fme7,
+	// Second CHR bank set (MMC5 background tiles with 8x16 sprites).
+	chr_map_b:  [8]int,
+	// Set by the PPU: sprite pattern fetches in progress, and 8x16 sprites.
+	sprite_fetch: bool,
+	sprite_16:  bool,
+	// ROM mapped at $6000-$7FFF instead of RAM (FME-7).
+	prg6_rom:    bool,
+	prg6_offset: int,
 }
 
-SUPPORTED_MAPPERS :: [?]int{0, 1, 2, 3, 4, 7, 9, 11, 66}
+SUPPORTED_MAPPERS :: [?]int{0, 1, 2, 3, 4, 5, 7, 9, 10, 11, 21, 22, 23, 24, 25, 26, 34, 66, 69, 71, 79, 87, 140, 180, 206, 232}
 
 mapper_supported :: proc(m: int) -> bool {
 	for s in SUPPORTED_MAPPERS {
@@ -187,6 +199,7 @@ cart_set_mirroring :: proc(cart: ^Cartridge, m: Mirroring) {
 cart_reset :: proc(cart: ^Cartridge) {
 	cart.irq = false
 	cart.latch = 0
+	cart.prg6_rom = false
 	cart_set_mirroring(cart, cart.mirroring)
 	cart_set_prg(cart, 0, 0, 0x4000)
 	cart_set_prg(cart, 2, -1, 0x4000) // last 16 KiB
@@ -197,10 +210,29 @@ cart_reset :: proc(cart: ^Cartridge) {
 		cart.mmc1 = {}
 		cart.mmc1.control = 0x0C
 		mmc1_update(cart)
-	case 4:
+	case 4, 206:
 		cart.mmc3 = {}
 		cart.mmc3.regs = {0, 2, 4, 5, 6, 7, 0, 1}
 		mmc3_update(cart)
+	case 5:
+		mmc5_reset(cart)
+	case 10:
+		cart.mmc2 = {}
+		cart.mmc2.latch = {1, 1}
+		mmc4_update(cart)
+	case 21, 22, 23, 25:
+		vrc4_reset(cart)
+	case 24, 26:
+		vrc6_reset(cart)
+	case 69:
+		fme7_reset(cart)
+	case 34, 79, 140:
+		cart_set_prg(cart, 0, 0, 0x8000)
+	case 180:
+		cart_set_prg(cart, 0, 0, 0x4000)
+		cart_set_prg(cart, 2, 0, 0x4000)
+	case 232:
+		cart_set_prg(cart, 2, 3, 0x4000)
 	case 7:
 		cart_set_prg(cart, 0, 0, 0x8000)
 		cart_set_mirroring(cart, .Single_Low)
@@ -216,8 +248,16 @@ cart_reset :: proc(cart: ^Cartridge) {
 // --- CPU side --------------------------------------------------------------
 
 cart_cpu_read :: proc(cart: ^Cartridge, addr: u16, open_bus: u8) -> u8 {
+	if cart.mapper == 5 && addr < 0x6000 {
+		if v, ok := mmc5_cpu_read(cart, addr, open_bus); ok {
+			return v
+		}
+	}
 	switch addr {
 	case 0x6000 ..= 0x7FFF:
+		if cart.prg6_rom {
+			return cart.prg_rom[cart.prg6_offset + int(addr & 0x1FFF)]
+		}
 		return cart.prg_ram[addr & 0x1FFF]
 	case 0x8000 ..= 0xFFFF:
 		slot := int(addr >> 13) & 3
@@ -227,11 +267,20 @@ cart_cpu_read :: proc(cart: ^Cartridge, addr: u16, open_bus: u8) -> u8 {
 }
 
 cart_cpu_write :: proc(cart: ^Cartridge, addr: u16, value: u8, cpu_cycle: u64) {
-	if addr >= 0x6000 && addr < 0x8000 {
-		cart.prg_ram[addr & 0x1FFF] = value
+	if addr < 0x8000 {
+		if cart.mapper == 5 && addr < 0x6000 {
+			mmc5_cpu_write(cart, addr, value)
+			return
+		}
+		if low_register_write(cart, addr, value) {
+			return
+		}
+		if addr >= 0x6000 && !cart.prg6_rom {
+			cart.prg_ram[addr & 0x1FFF] = value
+		}
 		return
 	}
-	if addr < 0x8000 {
+	if discrete_write(cart, addr, value) {
 		return
 	}
 	switch cart.mapper {
@@ -241,8 +290,22 @@ cart_cpu_write :: proc(cart: ^Cartridge, addr: u16, value: u8, cpu_cycle: u64) {
 		cart_set_prg(cart, 0, int(value), 0x4000)
 	case 3:
 		cart_set_chr(cart, 0, int(value), 0x2000)
-	case 4:
+	case 4, 206:
 		mmc3_write(cart, addr, value)
+	case 10:
+		if addr >= 0xA000 && addr < 0xB000 {
+			cart.mmc2.prg = value & 0x0F
+			mmc4_update(cart)
+		} else {
+			mmc2_write(cart, addr, value)
+			mmc4_update(cart)
+		}
+	case 21, 22, 23, 25:
+		vrc4_write(cart, addr, value)
+	case 24, 26:
+		vrc6_write(cart, addr, value)
+	case 69:
+		fme7_write(cart, addr, value)
 	case 7:
 		cart_set_prg(cart, 0, int(value & 0x07), 0x8000)
 		cart_set_mirroring(cart, value & 0x10 != 0 ? .Single_High : .Single_Low)
@@ -261,11 +324,38 @@ cart_cpu_write :: proc(cart: ^Cartridge, addr: u16, value: u8, cpu_cycle: u64) {
 
 cart_chr_read :: proc(cart: ^Cartridge, addr: u16) -> u8 {
 	a := addr & 0x1FFF
+	if cart.mapper == 5 {
+		return mmc5_chr_read(cart, a)
+	}
 	v := cart.chr[cart.chr_map[a >> 10] + int(a & 0x3FF)]
-	if cart.mapper == 9 {
-		mmc2_latch(cart, a)
+	switch cart.mapper {
+	case 9:  mmc2_latch(cart, a)
+	case 10: mmc4_latch(cart, a)
 	}
 	return v
+}
+
+// One CPU cycle elapsed: mapper IRQ counters and expansion audio.
+cart_cpu_clock :: proc(cart: ^Cartridge) {
+	switch cart.mapper {
+	case 21, 23, 25:
+		vrc_irq_clock(&cart.vrc.irq)
+		cart.irq = cart.vrc.irq.pending
+	case 24, 26:
+		vrc6_clock(&cart.vrc6)
+		cart.irq = cart.vrc6.irq.pending
+	case 69:
+		fme7_clock(cart)
+	}
+}
+
+// Expansion audio on the same scale as the APU mixer output (0..~1).
+cart_audio :: proc(cart: ^Cartridge) -> f32 {
+	switch cart.mapper {
+	case 24, 26:
+		return f32(vrc6_output(&cart.vrc6)) * (0.25 / 61.0)
+	}
+	return 0
 }
 
 cart_chr_write :: proc(cart: ^Cartridge, addr: u16, value: u8) {
@@ -381,6 +471,18 @@ mmc1_update :: proc(cart: ^Cartridge) {
 mmc3_write :: proc(cart: ^Cartridge, addr: u16, value: u8) {
 	m := &cart.mmc3
 	even := addr & 1 == 0
+	if cart.mapper == 206 {
+		// Namco 108: only bank switching, fixed layout, no IRQ or mirroring control
+		if addr < 0xA000 {
+			if even {
+				m.bank_select = value & 0x07
+			} else {
+				m.regs[m.bank_select] = value & 0x3F
+			}
+			mmc3_update(cart)
+		}
+		return
+	}
 	switch addr {
 	case 0x8000 ..= 0x9FFF:
 		if even {

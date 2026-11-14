@@ -83,6 +83,9 @@ ppu_mem_read :: proc(c: ^Console, addr: u16) -> u8 {
 	case 0x0000 ..= 0x1FFF:
 		return cart_chr_read(&c.cart, a)
 	case 0x2000 ..= 0x3EFF:
+		if c.cart.mapper == 5 {
+			return mmc5_nt_read(&c.cart, c.vram[:], a)
+		}
 		return c.vram[cart_nt_index(&c.cart, a)]
 	case:
 		return c.ppu.palette[palette_index(a)]
@@ -96,6 +99,10 @@ ppu_mem_write :: proc(c: ^Console, addr: u16, value: u8) {
 	case 0x0000 ..= 0x1FFF:
 		cart_chr_write(&c.cart, a, value)
 	case 0x2000 ..= 0x3EFF:
+		if c.cart.mapper == 5 {
+			mmc5_nt_write(&c.cart, c.vram[:], a, value)
+			return
+		}
 		c.vram[cart_nt_index(&c.cart, a)] = value
 	case:
 		c.ppu.palette[palette_index(a)] = value & 0x3F
@@ -142,6 +149,7 @@ ppu_reg_write :: proc(c: ^Console, reg: u16, value: u8) {
 	case 0:
 		p.ctrl = value
 		p.t = (p.t & 0xF3FF) | (u16(value & 0x03) << 10)
+		c.cart.sprite_16 = value & 0x20 != 0
 	case 1:
 		p.mask = value
 	case 3:
@@ -402,7 +410,9 @@ ppu_step :: proc(c: ^Console) {
 		case SPRITE_FETCH_DOT:
 			// Sprite pattern fetches happen during dots 257-320; we do them all at
 			// once where the first one would put A12 on the bus.
+			c.cart.sprite_fetch = true
 			evaluate_sprites(c)
+			c.cart.sprite_fetch = false
 			if prerender {
 				p.sprite_count = 0 // dummy fetches; nothing is drawn on line 0
 			}
@@ -426,6 +436,12 @@ ppu_step :: proc(c: ^Console) {
 		}
 	}
 
+	if p.dot == 1 && c.cart.mapper == 5 {
+		switch {
+		case visible:         mmc5_scanline(&c.cart, p.scanline, rendering)
+		case p.scanline == VBLANK_LINE: mmc5_scanline(&c.cart, -1, false)
+		}
+	}
 	if p.scanline == VBLANK_LINE && p.dot == 1 {
 		p.status |= 0x80
 		p.frame_ready = true

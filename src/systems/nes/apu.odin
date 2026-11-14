@@ -456,7 +456,7 @@ mix_sample :: proc(c: ^Console) {
 	pulse := pulse_table[p_out[0] + p_out[1]]
 	tnd := tnd_table[3 * int(tri) + 2 * int(noise) + int(a.dmc.output)]
 
-	a.sample_acc += pulse + tnd
+	a.sample_acc += pulse + tnd + cart_audio(&c.cart)
 	a.sample_count += 1
 	a.sample_phase += SAMPLE_RATE
 	if a.sample_phase < CPU_CLOCK {

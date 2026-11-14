@@ -107,6 +107,7 @@ tick :: proc(c: ^Console) {
 	ppu_step(c)
 	ppu_step(c)
 	ppu_step(c)
+	cart_cpu_clock(&c.cart)
 	apu_step(c)
 
 	line := ppu_nmi_line(&c.ppu)
@@ -162,7 +163,7 @@ bus_write :: proc(c: ^Console, addr: u16, value: u8) {
 		}
 	case 0x4000 ..= 0x4013, 0x4015, 0x4017:
 		apu_write(&c.apu, addr, value)
-	case 0x4020 ..= 0xFFFF:
+	case 0x4018 ..= 0xFFFF:
 		cart_cpu_write(&c.cart, addr, value, c.cpu.cycles)
 	}
 }

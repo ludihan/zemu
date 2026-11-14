@@ -198,3 +198,115 @@ save_state_round_trip_is_deterministic :: proc(t: ^testing.T) {
 	testing.expect(t, !load_state(c, bad))
 	testing.expect(t, !load_state(c, nil))
 }
+
+// Builds an iNES image whose every 8 KiB PRG bank and 1 KiB CHR bank starts
+// with its own bank number, so mappings can be checked by reading memory.
+@(private = "file")
+synthetic_rom :: proc(mapper: int, prg_16k, chr_8k: int) -> []u8 {
+	size := 16 + prg_16k * 0x4000 + chr_8k * 0x2000
+	rom := make([]u8, size)
+	copy(rom, "NES\x1A")
+	rom[4] = u8(prg_16k)
+	rom[5] = u8(chr_8k)
+	rom[6] = u8(mapper & 0x0F) << 4
+	rom[7] = u8(mapper & 0xF0)
+	for b in 0 ..< prg_16k * 2 {
+		rom[16 + b * 0x2000] = u8(b)
+	}
+	chr := 16 + prg_16k * 0x4000
+	for b in 0 ..< chr_8k * 8 {
+		rom[chr + b * 0x400] = u8(b)
+	}
+	return rom
+}
+
+@(private = "file")
+prg_bank_at :: proc(c: ^Console, addr: u16) -> u8 {
+	return cart_cpu_read(&c.cart, addr, 0)
+}
+
+@(private = "file")
+chr_bank_at :: proc(c: ^Console, addr: u16) -> u8 {
+	return cart_chr_read(&c.cart, addr)
+}
+
+@(test)
+vrc4_banking_and_irq :: proc(t: ^testing.T) {
+	rom := synthetic_rom(23, 8, 16)
+	defer delete(rom)
+	c, err := create(rom)
+	if !testing.expect_value(t, err, emu.Load_Error.None) {return}
+	defer destroy(c)
+	cart := &c.cart
+	cart_cpu_write(cart, 0x8000, 5, 0) // PRG 0
+	cart_cpu_write(cart, 0xA000, 7, 0) // PRG 1
+	testing.expect_value(t, prg_bank_at(c, 0x8000), 5)
+	testing.expect_value(t, prg_bank_at(c, 0xA000), 7)
+	testing.expect_value(t, prg_bank_at(c, 0xC000), 14) // second to last
+	testing.expect_value(t, prg_bank_at(c, 0xE000), 15)
+	cart_cpu_write(cart, 0x9002, 0x02, 0) // swap mode
+	testing.expect_value(t, prg_bank_at(c, 0x8000), 14)
+	testing.expect_value(t, prg_bank_at(c, 0xC000), 5)
+	// CHR bank 3 = 0x2A, written as two nibbles (mapper 23 uses A0/A1)
+	cart_cpu_write(cart, 0xC002, 0x0A, 0)
+	cart_cpu_write(cart, 0xC003, 0x02, 0)
+	testing.expect_value(t, chr_bank_at(c, 0x0C00), 0x2A)
+	// IRQ in cycle mode fires after (256 - latch) CPU cycles
+	cart_cpu_write(cart, 0xF000, 0x0C, 0)
+	cart_cpu_write(cart, 0xF001, 0x0F, 0) // latch = 0xFC
+	cart_cpu_write(cart, 0xF002, 0x06, 0) // enable, cycle mode
+	for _ in 0 ..< 3 {cart_cpu_clock(cart)}
+	testing.expect(t, !cart.irq)
+	cart_cpu_clock(cart)
+	testing.expect(t, cart.irq)
+	cart_cpu_write(cart, 0xF003, 0, 0)
+	testing.expect(t, !cart.irq)
+}
+
+@(test)
+fme7_banking_and_irq :: proc(t: ^testing.T) {
+	rom := synthetic_rom(69, 8, 16)
+	defer delete(rom)
+	c, err := create(rom)
+	if !testing.expect_value(t, err, emu.Load_Error.None) {return}
+	defer destroy(c)
+	cart := &c.cart
+	write :: proc(cart: ^Cartridge, cmd, v: u8) {
+		cart_cpu_write(cart, 0x8000, cmd, 0)
+		cart_cpu_write(cart, 0xA000, v, 0)
+	}
+	write(cart, 0x9, 3)
+	write(cart, 0xB, 9)
+	write(cart, 0x5, 0x33)
+	write(cart, 0x8, 4) // ROM bank 4 at $6000
+	testing.expect_value(t, prg_bank_at(c, 0x8000), 3)
+	testing.expect_value(t, prg_bank_at(c, 0xC000), 9)
+	testing.expect_value(t, prg_bank_at(c, 0xE000), 15)
+	testing.expect_value(t, prg_bank_at(c, 0x6000), 4)
+	testing.expect_value(t, chr_bank_at(c, 0x1400), 0x33)
+	write(cart, 0xE, 2)
+	write(cart, 0xF, 0)
+	write(cart, 0xD, 0x81)
+	for _ in 0 ..< 2 {cart_cpu_clock(cart)}
+	testing.expect(t, !cart.irq)
+	cart_cpu_clock(cart) // 2 -> 1 -> 0 -> 0xFFFF fires
+	testing.expect(t, cart.irq)
+}
+
+@(test)
+vrc6_audio_produces_output :: proc(t: ^testing.T) {
+	rom := synthetic_rom(24, 8, 16)
+	defer delete(rom)
+	c, _ := create(rom)
+	defer destroy(c)
+	cart := &c.cart
+	cart_cpu_write(cart, 0x9000, 0x7F, 0) // pulse 1: duty 7, volume 15
+	cart_cpu_write(cart, 0x9001, 0x40, 0)
+	cart_cpu_write(cart, 0x9002, 0x80, 0) // enable
+	high := 0
+	for _ in 0 ..< 2000 {
+		cart_cpu_clock(cart)
+		if vrc6_output(&cart.vrc6) > 0 {high += 1}
+	}
+	testing.expect(t, high > 600 && high < 1400, "pulse should be on about half the time")
+}
