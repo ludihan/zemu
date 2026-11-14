@@ -806,23 +806,52 @@ draw_line :: proc(g: ^Gpu, a, b: Vertex, shaded, semi: bool) {
 	if abs(dx) >= 1024 || abs(dy) >= 512 {
 		return
 	}
-	steps := max(abs(dx), abs(dy))
+	k := max(abs(dx), abs(dy))
 	flags: Draw_Flags
 	if semi {flags += {.Semi}}
-	if g.dither && shaded {flags += {.Dither}}
-	for i in 0 ..= steps {
-		t := steps == 0 ? i32(0) : i
-		x := a.x + (steps == 0 ? 0 : dx * t / steps)
-		y := a.y + (steps == 0 ? 0 : dy * t / steps)
-		r, gg, bb := a.r, a.g, a.b
-		if shaded && steps > 0 {
-			r = a.r + (b.r - a.r) * t / steps
-			gg = a.g + (b.g - a.g) * t / steps
-			bb = a.b + (b.b - a.b) * t / steps
+	if g.dither {flags += {.Dither}} // unlike polygons, flat lines are dithered too
+	// The hardware always draws left to right, stepping 32.32 fixed-point
+	// coordinates from the centre of the first pixel; steps round away from
+	// zero, and lines going up start half a pixel lower.
+	p0, p1 := a, b
+	if k > 0 && p0.x >= p1.x {
+		p0, p1 = b, a
+	}
+	divide :: proc(delta: i64, k: i64) -> i64 {
+		d := delta << 32
+		if d < 0 {d -= k - 1} else if d > 0 {d += k - 1}
+		return d / k
+	}
+	HALF :: i64(1) << 31
+	x := i64(p0.x) << 32 | HALF - 1024
+	y := i64(p0.y) << 32 | HALF
+	step_x, step_y: i64
+	if k > 0 {
+		step_x = divide(i64(p1.x - p0.x), i64(k))
+		step_y = divide(i64(p1.y - p0.y), i64(k))
+	}
+	if step_y < 0 {
+		y -= 1024
+	}
+	// colours step in 12-bit fixed point, from the middle of the first value
+	col := [3]i64{i64(p0.r) << 12 | 1 << 11, i64(p0.g) << 12 | 1 << 11, i64(p0.b) << 12 | 1 << 11}
+	col_step: [3]i64
+	if shaded && k > 0 {
+		col_step = {
+			(i64(p1.r - p0.r) << 12) / i64(k),
+			(i64(p1.g - p0.g) << 12) / i64(k),
+			(i64(p1.b - p0.b) << 12) / i64(k),
 		}
-		if in_area(g, x, y) {
-			plot(g, x, y, r, gg, bb, flags, nil, 0, 0)
+	}
+	for _ in 0 ..= k {
+		px := i32(((x >> 32) & 2047) << 21 >> 21) // 11-bit signed
+		py := i32(((y >> 32) & 2047) << 21 >> 21)
+		if in_area(g, px, py) {
+			plot(g, px, py, i32(col[0] >> 12), i32(col[1] >> 12), i32(col[2] >> 12), flags, nil, 0, 0)
 		}
+		x += step_x
+		y += step_y
+		col += col_step
 	}
 }
 
