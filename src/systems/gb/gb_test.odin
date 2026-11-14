@@ -22,14 +22,14 @@ test_dir :: proc() -> (string, bool) {
 }
 
 @(private = "file")
-load :: proc(path: string) -> (^Console, bool) {
+load :: proc(path: string, model := Model.Auto) -> (^Console, bool) {
 	rom, err := os.read_entire_file(path, context.allocator)
 	if err != nil {
 		log.errorf("missing %s", path)
 		return nil, false
 	}
 	defer delete(rom)
-	c, load_err := create(rom)
+	c, load_err := create(rom, model)
 	if load_err != .None {
 		log.errorf("%s: %v", path, load_err)
 		return nil, false
@@ -158,11 +158,11 @@ blargg_sound_suite :: proc(t: ^testing.T) {
 		log.warn("ZEMU_GB_TESTS not set")
 		return
 	}
-	// 09, 10 and 12 test DMG wave RAM corruption quirks that are not emulated.
 	roms := []string {
 		"01-registers", "02-len ctr", "03-trigger", "04-sweep", "05-sweep details",
 		"06-overflow on trigger", "07-len sweep period sync", "08-len ctr during power",
-		"11-regs after power",
+		"09-wave read while on", "10-wave trigger while on", "11-regs after power",
+		"12-wave write while on",
 	}
 	for name in roms {
 		c, loaded := load(fmt.tprintf("%s/gb-test-roms/dmg_sound/rom_singles/%s.gb", dir, name))
@@ -189,5 +189,58 @@ image_pixels :: proc(img: ^image.Image) -> []u8 {
 		return img.pixels[:]
 	} else {
 		return img.pixels.buf[:]
+	}
+}
+
+
+// The other blargg suites that report through cartridge RAM. The OAM bug
+// tests are for the DMG (their headers also allow CGB mode).
+@(test)
+blargg_ram_protocol_suites :: proc(t: ^testing.T) {
+	dir, ok := test_dir()
+	if !ok {
+		log.warn("ZEMU_GB_TESTS not set")
+		return
+	}
+	Case :: struct {
+		path:  string,
+		model: Model,
+	}
+	cases := []Case {
+		{"cgb_sound/rom_singles/01-registers.gb", .Auto},
+		{"cgb_sound/rom_singles/02-len ctr.gb", .Auto},
+		{"cgb_sound/rom_singles/03-trigger.gb", .Auto},
+		{"cgb_sound/rom_singles/04-sweep.gb", .Auto},
+		{"cgb_sound/rom_singles/05-sweep details.gb", .Auto},
+		{"cgb_sound/rom_singles/06-overflow on trigger.gb", .Auto},
+		{"cgb_sound/rom_singles/07-len sweep period sync.gb", .Auto},
+		{"cgb_sound/rom_singles/08-len ctr during power.gb", .Auto},
+		{"cgb_sound/rom_singles/09-wave read while on.gb", .Auto},
+		{"cgb_sound/rom_singles/10-wave trigger while on.gb", .Auto},
+		{"cgb_sound/rom_singles/11-regs after power.gb", .Auto},
+		{"cgb_sound/rom_singles/12-wave.gb", .Auto},
+		{"oam_bug/rom_singles/1-lcd_sync.gb", .Dmg},
+		{"oam_bug/rom_singles/2-causes.gb", .Dmg},
+		{"oam_bug/rom_singles/3-non_causes.gb", .Dmg},
+		{"oam_bug/rom_singles/4-scanline_timing.gb", .Dmg},
+		{"oam_bug/rom_singles/5-timing_bug.gb", .Dmg},
+		{"oam_bug/rom_singles/6-timing_no_bug.gb", .Dmg},
+		{"oam_bug/rom_singles/8-instr_effect.gb", .Dmg},
+		{"mem_timing-2/mem_timing.gb", .Auto},
+	}
+	for tc in cases {
+		c, loaded := load(fmt.tprintf("%s/gb-test-roms/%s", dir, tc.path), tc.model)
+		if !loaded {continue}
+		status := -1
+		for _ in 0 ..< 60 * 30 {
+			run_frame(c, {}, nil)
+			ram := c.cart.ram
+			if len(ram) > 4 && ram[1] == 0xDE && ram[2] == 0xB0 && ram[3] == 0x61 && ram[0] != 0x80 {
+				status = int(ram[0])
+				break
+			}
+		}
+		testing.expectf(t, status == 0, "%s: status %d", tc.path, status)
+		destroy(c)
 	}
 }
