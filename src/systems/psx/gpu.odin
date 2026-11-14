@@ -33,6 +33,10 @@ Gpu :: struct {
 	tex_disable:   bool,
 	rect_flip_x:   bool,
 	rect_flip_y:   bool,
+	// palette cache
+	clut_cache:    [256]u16,
+	clut_entries:  int, // 0, 16 or 256 entries loaded
+	clut_cached_x, clut_cached_y: i32,
 	// texture window (E2)
 	win_mask_x, win_mask_y, win_off_x, win_off_y: i32,
 	// drawing area and offset (E3-E5)
@@ -55,6 +59,7 @@ Gpu :: struct {
 	interlace:     bool,
 	irq:           bool,
 	irq_edge:      bool, // set when irq rises; consumed by the console
+	busy:          int,  // GPU clocks of drawing still "in progress"
 	allow_tex_disable: bool,
 
 	// command assembly
@@ -150,12 +155,18 @@ gpu_status :: proc(g: ^Gpu) -> u32 {
 	if g.interlace {s |= 1 << 22}
 	if g.display_off {s |= 1 << 23}
 	if g.irq {s |= 1 << 24}
-	// always ready: command, VRAM read, DMA block
-	s |= 1 << 26 | 1 << 27 | 1 << 28
+	// Pixels are written at once, but the GPU reports itself busy (not
+	// ready for commands or DMA blocks) for about as long as drawing them
+	// takes. "Ready to send VRAM" is set while a VRAM-to-CPU copy is pending.
+	ready := g.busy <= 0
+	if ready {s |= 1 << 26}
+	// The FIFO is only left holding data while drawing when DMA fed it.
+	if ready || g.dma_dir == 0 {s |= 1 << 28}
+	if g.read_active {s |= 1 << 27}
 	s |= g.dma_dir << 29
 	switch g.dma_dir {
-	case 1: s |= 1 << 25
-	case 2: s |= 1 << 25 // ready for DMA writes
+	case 1: s |= 1 << 25 // FIFO not full
+	case 2: if ready {s |= 1 << 25} // follows "ready for a DMA block"
 	case 3: if g.read_active {s |= 1 << 25}
 	}
 	if g.odd_line && !(g.interlace && g.vres_480) {s |= 1 << 31}
@@ -282,6 +293,8 @@ execute_command :: proc(g: ^Gpu) {
 	c := &g.cmd
 	op := c[0] >> 24
 	switch op {
+	case 0x01: // clear cache: the palette is reloaded at the next textured draw
+		g.clut_entries = 0
 	case 0x02:
 		fill_rect(g, c[0], c[1], c[2])
 	case 0x1F:
@@ -335,7 +348,7 @@ execute_command :: proc(g: ^Gpu) {
 		g.tex_x = i32(w & 0xF) * 64
 		g.tex_y = i32((w >> 4) & 1) * 256
 		g.semi_mode = (w >> 5) & 3
-		g.tex_depth = min((w >> 7) & 3, 2)
+		g.tex_depth = (w >> 7) & 3 // 2 and the "reserved" 3 both mean 15-bit
 		g.dither = w & (1 << 9) != 0
 		g.draw_display = w & (1 << 10) != 0
 		g.tex_disable = g.allow_tex_disable && w & (1 << 11) != 0
@@ -448,14 +461,25 @@ copy_vram :: proc(g: ^Gpu, src, dst, size: u32) {
 	dy := i32((dst >> 16) & 0x1FF)
 	w := i32(((size & 0xFFFF) - 1) & 0x3FF) + 1
 	h := i32((((size >> 16) & 0xFFFF) - 1) & 0x1FF) + 1
+	// The GPU moves each row through a 16-pixel buffer: it reads up to the
+	// next 16-pixel boundary of the source, then writes that run. Overlapping
+	// copies therefore act like memmove inside a run and smear across runs.
+	buf: [16]u16
 	for y in 0 ..< h {
-		for x in 0 ..< w {
-			p := g.vram[vram_index(sx + x, sy + y)]
-			di := vram_index(dx + x, dy + y)
-			if g.check_mask && g.vram[di] & 0x8000 != 0 {
-				continue
+		x: i32 = 0
+		for x < w {
+			run := min(16 - ((sx + x) & 15), w - x)
+			for k in 0 ..< run {
+				buf[k] = g.vram[vram_index(sx + x + k, sy + y)]
 			}
-			g.vram[di] = p | (g.set_mask ? 0x8000 : 0)
+			for k in 0 ..< run {
+				di := vram_index(dx + x + k, dy + y)
+				if g.check_mask && g.vram[di] & 0x8000 != 0 {
+					continue
+				}
+				g.vram[di] = buf[k] | (g.set_mask ? 0x8000 : 0)
+			}
+			x += run
 		}
 	}
 }
@@ -494,14 +518,34 @@ texel :: proc(g: ^Gpu, t: ^Texture_Info, u_in, v_in: i32) -> u16 {
 	switch t.depth {
 	case 0:
 		w := g.vram[vram_index(t.page_x + u / 4, t.page_y + v)]
-		idx := i32(w >> (u32(u & 3) * 4)) & 0xF
-		return g.vram[vram_index(t.clut_x + idx, t.clut_y)]
+		return g.clut_cache[(w >> (u32(u & 3) * 4)) & 0xF]
 	case 1:
 		w := g.vram[vram_index(t.page_x + u / 2, t.page_y + v)]
-		idx := i32(w >> (u32(u & 1) * 8)) & 0xFF
-		return g.vram[vram_index(t.clut_x + idx, t.clut_y)]
+		return g.clut_cache[(w >> (u32(u & 1) * 8)) & 0xFF]
 	}
 	return g.vram[vram_index(t.page_x + u, t.page_y + v)]
+}
+
+// The GPU keeps the palette in a cache that it reloads only when a textured
+// primitive uses a different palette address, or needs all 256 entries
+// after only 16 were loaded, or after GP0(01) cleared it. Overwriting palette
+// data in VRAM is not seen until then.
+@(private = "file")
+clut_load :: proc(g: ^Gpu, t: ^Texture_Info) {
+	needed: int
+	switch t.depth {
+	case 0: needed = 16
+	case 1: needed = 256
+	case: return // 15-bit textures do not use the palette
+	}
+	if g.clut_entries >= needed && g.clut_cached_x == t.clut_x && g.clut_cached_y == t.clut_y {
+		return
+	}
+	for i in 0 ..< needed {
+		g.clut_cache[i] = g.vram[vram_index(t.clut_x + i32(i), t.clut_y)]
+	}
+	g.clut_entries = needed
+	g.clut_cached_x, g.clut_cached_y = t.clut_x, t.clut_y
 }
 
 @(private = "file")
@@ -513,6 +557,7 @@ in_area :: #force_inline proc(g: ^Gpu, x, y: i32) -> bool {
 // only when textured.
 @(private = "file")
 plot :: proc(g: ^Gpu, x, y: i32, r, gg, b: i32, flags: Draw_Flags, t: ^Texture_Info, u, v: i32) {
+	g.busy += 1 // about one GPU clock per pixel
 	idx := vram_index(x, y)
 	dst := g.vram[idx]
 	if g.check_mask && dst & 0x8000 != 0 {
@@ -577,7 +622,7 @@ texture_info :: proc(g: ^Gpu, clut_word, page_word: u32) -> Texture_Info {
 		page_x    = i32((page_word >> 16) & 0xF) * 64,
 		page_y    = i32((page_word >> 20) & 1) * 256,
 		semi_mode = (page_word >> 21) & 3,
-		depth     = min((page_word >> 23) & 3, 2),
+		depth     = (page_word >> 23) & 3,
 	}
 }
 
@@ -623,6 +668,8 @@ draw_polygon :: proc(g: ^Gpu, op: u32) {
 				g.tex_y = page.page_y
 				g.semi_mode = page.semi_mode
 				g.tex_depth = page.depth
+				// ...including texture disable, when GP1(09) allows it
+				g.tex_disable = g.allow_tex_disable && (uv >> 27) & 1 != 0
 			}
 		}
 	}
@@ -634,6 +681,9 @@ draw_polygon :: proc(g: ^Gpu, op: u32) {
 	if shaded {flags += {.Shaded}}
 	if g.dither && (shaded || (textured && !raw)) {flags += {.Dither}}
 
+	if textured {
+		clut_load(g, &tex)
+	}
 	draw_triangle(g, verts[0], verts[1], verts[2], flags, &tex)
 	if quad {
 		draw_triangle(g, verts[1], verts[2], verts[3], flags, &tex)
@@ -686,6 +736,27 @@ draw_triangle :: proc(g: ^Gpu, a, b, c_in: Vertex, flags: Draw_Flags, tex: ^Text
 	shaded := .Shaded in flags
 	textured := .Textured in flags
 
+	// Colours and texture coordinates step by per-triangle gradients in
+	// 12.12 fixed point (truncated), starting from the topmost vertex with a
+	// half-unit bias, as the GPU's interpolators do.
+	// The anchor ("core") vertex is the leftmost one, with the tie-breaking
+	// the hardware uses.
+	top: Vertex
+	if b.x <= a.x {
+		top = c_in.x <= b.x ? c_in : b
+	} else {
+		top = c_in.x < a.x ? c_in : a
+	}
+	gr := gradients(v0, v1, v2, proc(v: Vertex) -> i32 {return v.r})
+	gg_ := gradients(v0, v1, v2, proc(v: Vertex) -> i32 {return v.g})
+	gb := gradients(v0, v1, v2, proc(v: Vertex) -> i32 {return v.b})
+	gu := gradients(v0, v1, v2, proc(v: Vertex) -> i32 {return v.u})
+	gv := gradients(v0, v1, v2, proc(v: Vertex) -> i32 {return v.v})
+	at :: #force_inline proc(base: i32, d: [2]i64, x, y: i32, top: Vertex) -> i32 {
+		fixed := (i64(base) << FIXED_BITS) + (1 << (FIXED_BITS - 1)) + d.x * i64(x - top.x) + d.y * i64(y - top.y)
+		return i32(fixed >> FIXED_BITS)
+	}
+
 	for y in min_y ..= max_y {
 		for x in min_x ..= max_x {
 			w0 := edge(v1, v2, x, y)
@@ -696,18 +767,36 @@ draw_triangle :: proc(g: ^Gpu, a, b, c_in: Vertex, flags: Draw_Flags, tex: ^Text
 			}
 			r, gg, bb := v0.r, v0.g, v0.b
 			if shaded {
-				r = i32((w0 * i64(v0.r) + w1 * i64(v1.r) + w2 * i64(v2.r)) / area)
-				gg = i32((w0 * i64(v0.g) + w1 * i64(v1.g) + w2 * i64(v2.g)) / area)
-				bb = i32((w0 * i64(v0.b) + w1 * i64(v1.b) + w2 * i64(v2.b)) / area)
+				r = clamp(at(top.r, gr, x, y, top), 0, 255)
+				gg = clamp(at(top.g, gg_, x, y, top), 0, 255)
+				bb = clamp(at(top.b, gb, x, y, top), 0, 255)
 			}
 			u, v: i32
 			if textured {
-				u = i32((w0 * i64(v0.u) + w1 * i64(v1.u) + w2 * i64(v2.u)) / area)
-				v = i32((w0 * i64(v0.v) + w1 * i64(v1.v) + w2 * i64(v2.v)) / area)
+				u = at(top.u, gu, x, y, top) & 0xFF
+				v = at(top.v, gv, x, y, top) & 0xFF
 			}
 			plot(g, x, y, r, gg, bb, flags, tex, u, v)
 		}
 	}
+}
+
+@(private = "file")
+FIXED_BITS :: 12
+
+// d/dx and d/dy of an attribute across a triangle, in 12-bit fixed point,
+// truncated toward zero. Together with the leftmost-vertex anchor this
+// reproduces hardware VRAM dumps exactly.
+@(private = "file")
+gradients :: proc(a, b, c: Vertex, attr: proc(v: Vertex) -> i32) -> [2]i64 {
+	denom := i64(b.x - a.x) * i64(c.y - b.y) - i64(c.x - b.x) * i64(b.y - a.y)
+	if denom == 0 {
+		return {}
+	}
+	pa, pb, pc := i64(attr(a)), i64(attr(b)), i64(attr(c))
+	ddx := (pb - pa) * i64(c.y - b.y) - (pc - pb) * i64(b.y - a.y)
+	ddy := i64(b.x - a.x) * (pc - pb) - i64(c.x - b.x) * (pb - pa)
+	return {(ddx << FIXED_BITS) / denom, (ddy << FIXED_BITS) / denom}
 }
 
 @(private = "file")
@@ -776,6 +865,9 @@ draw_rect :: proc(g: ^Gpu, op: u32) {
 	r := i32(c[0] & 0xFF)
 	gg := i32((c[0] >> 8) & 0xFF)
 	b := i32((c[0] >> 16) & 0xFF)
+	if textured {
+		clut_load(g, &tex)
+	}
 
 	for yy in 0 ..< h {
 		y := y0 + yy
@@ -787,7 +879,9 @@ draw_rect :: proc(g: ^Gpu, op: u32) {
 			if x < g.area_left || x > g.area_right {
 				continue
 			}
-			u := g.rect_flip_x ? u0 - xx : u0 + xx
+			// X-flipped rectangles start one texel over: the GPU forces the
+			// low bit of U on before counting down.
+			u := g.rect_flip_x ? (u0 | 1) - xx : u0 + xx
 			v := g.rect_flip_y ? v0 - yy : v0 + yy
 			plot(g, x, y, r, gg, b, flags, &tex, u, v)
 		}
