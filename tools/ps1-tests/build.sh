@@ -45,6 +45,17 @@ for d in libc psxapi psxgpu psxgte psxetc psxpress psxspu psxcd psxsio; do
 		compile "$f" "$o" 2>/dev/null || rm -f "$o" # a few unused files do not build
 	done
 done
+# array new/delete for the C++ tests (the SDK has malloc but no C++ runtime)
+cat > "$WORK/cxxrt.cpp" <<'EOF'
+#include <stdlib.h>
+void *operator new(unsigned n) { return malloc(n); }
+void *operator new[](unsigned n) { return malloc(n); }
+void operator delete(void *p) { free(p); }
+void operator delete[](void *p) { free(p); }
+void operator delete(void *p, unsigned) { free(p); }
+void operator delete[](void *p, unsigned) { free(p); }
+EOF
+compile "$WORK/cxxrt.cpp" "$WORK/lib/cxxrt.o" 2>/dev/null
 
 for main in "$TESTS"/gpu/*/main.c* "$TESTS"/dma/*/main.c* "$TESTS"/spu/*/main.c* "$TESTS"/mdec/*/main.c* "$TESTS"/timers/main.c* "$TESTS"/cpu/*/main.c* "$TESTS"/gte/*/main.c* "$TESTS"/gte-fuzz/main.c*; do
 	[ -f "$main" ] || continue
