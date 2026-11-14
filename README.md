@@ -18,9 +18,11 @@ is no GUI library, and the font is an original one made for this project.
 NES and SNES games run with PAL (50 Hz) timing when the ROM header or a
 file name tag such as `(Europe)` or `(PAL)` marks them as European releases.
 
-PlayStation 2 and 3 are not supported. Emulating them needs recompiling
-CPU cores and GPU-accelerated graphics on a scale far beyond these
-interpreters.
+PlayStation 2 support is in progress in `src/systems/ps2` and is not usable
+yet. So far the Emotion Engine CPU (R5900 with its 128-bit MMI instructions
+and non-IEEE FPU) runs bare-metal ELF programs, checked against C test
+programs compiled with clang. The vector units, Graphics Synthesizer, IOP,
+SPU2 and BIOS boot are still to come. PlayStation 3 is not planned.
 
 ## Building
 
