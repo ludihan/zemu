@@ -77,7 +77,7 @@ nestest_matches_reference_log :: proc(t: ^testing.T) {
 
 // Runs a blargg-style test ROM that reports through $6000 and returns its text.
 @(private = "file")
-run_blargg :: proc(t: ^testing.T, path: string, max_frames := 3000) -> (status: u8, text: string) {
+run_blargg :: proc(t: ^testing.T, path: string, max_frames := 3000, offset: u64 = 1) -> (status: u8, text: string) {
 	rom, rom_err := os.read_entire_file(path, context.allocator)
 	if rom_err != nil {
 		log.errorf("cannot read %s", path)
@@ -90,18 +90,24 @@ run_blargg :: proc(t: ^testing.T, path: string, max_frames := 3000) -> (status: 
 		return 0xFF, ""
 	}
 	defer destroy(c)
+	c.ppu_offset = offset
 	started := false
 	reset_at := -1
+	armed := true // one reset per $81 request: the byte stays $81 until the ROM restarts
 	for frame in 0 ..< max_frames {
 		run_frame(c, {}, nil)
 		ram := c.cart.prg_ram[:]
 		signature_ok := ram[1] == 0xDE && ram[2] == 0xB0 && ram[3] == 0x61
 		if !signature_ok {continue}
 		switch ram[0] {
+		case 0x81:
+			if reset_at < 0 && armed {
+				reset_at = frame + 10
+				armed = false
+			}
 		case 0x80:
 			started = true
-		case 0x81:
-			if reset_at < 0 {reset_at = frame + 10}
+			armed = true
 		case:
 			if started {
 				end := 4
@@ -139,10 +145,32 @@ blargg_suites :: proc(t: ^testing.T) {
 		"apu_test/rom_singles/6-irq_flag_timing.nes",
 		"apu_test/rom_singles/7-dmc_basics.nes",
 		"apu_test/rom_singles/8-dmc_rates.nes",
+		"cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes",
+		"cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes",
+		"cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes",
+		"cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes",
+		"cpu_reset/registers.nes",
+		"cpu_reset/ram_after_reset.nes",
+		"cpu_exec_space/test_cpu_exec_space_ppuio.nes",
+		"cpu_exec_space/test_cpu_exec_space_apu.nes",
+		"apu_reset/4015_cleared.nes",
+		"apu_reset/4017_timing.nes",
+		"apu_reset/4017_written.nes",
+		"apu_reset/irq_flag_cleared.nes",
+		"apu_reset/len_ctrs_enabled.nes",
+		"apu_reset/works_immediately.nes",
 		"ppu_vbl_nmi/rom_singles/01-vbl_basics.nes",
+		"ppu_vbl_nmi/rom_singles/02-vbl_set_time.nes",
 		"ppu_vbl_nmi/rom_singles/03-vbl_clear_time.nes",
 		"ppu_vbl_nmi/rom_singles/04-nmi_control.nes",
+		"ppu_vbl_nmi/rom_singles/05-nmi_timing.nes",
+		"ppu_vbl_nmi/rom_singles/06-suppression.nes",
+		"ppu_vbl_nmi/rom_singles/07-nmi_on_timing.nes",
+		"ppu_vbl_nmi/rom_singles/08-nmi_off_timing.nes",
 		"ppu_vbl_nmi/rom_singles/09-even_odd_frames.nes",
+		"ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes",
+		"ppu_open_bus/ppu_open_bus.nes",
+		"oam_stress/oam_stress.nes",
 		"oam_read/oam_read.nes",
 		"mmc3_test_2/rom_singles/1-clocking.nes",
 		"mmc3_test_2/rom_singles/2-details.nes",
