@@ -7,7 +7,7 @@ SCREEN_HEIGHT :: 240
 
 PRERENDER_LINE     :: 261
 PRERENDER_LINE_PAL :: 311
-SPRITE_FETCH_DOT :: 260
+SPRITE_FETCH_DOT :: 261
 VBLANK_LINE    :: 241
 
 Sprite :: struct {
@@ -27,10 +27,13 @@ Ppu :: struct {
 	w:           bool,
 	read_buffer: u8,
 	open_bus:    u8,
+	decay_at:    [8]u64, // frame at which each open-bus bit was last refreshed with a 1
 
 	scanline:    int,
 	dot:         int,
 	odd_frame:   bool,
+	suppress_vbl: bool, // $2002 was read on the dot before the flag would be set
+	render_prev: bool,  // rendering enable as seen one dot ago (the skip check lags)
 	pal:         bool, // 312 lines, no skipped dot, red/green emphasis swapped
 	frame_ready: bool,
 	frame_count: u64,
@@ -128,40 +131,74 @@ ppu_mem_write :: proc(c: ^Console, addr: u16, value: u8) {
 
 // --- CPU-visible registers -------------------------------------------------
 
+// The PPU's data bus latch ("decay register"): bits that are not refreshed
+// with a 1 for about 600 ms fade to 0.
+DECAY_FRAMES :: 36
+
+@(private = "file")
+latch_value :: proc(p: ^Ppu) -> u8 {
+	for i in 0 ..< 8 {
+		if p.open_bus & (1 << uint(i)) != 0 && p.frame_count - p.decay_at[i] > DECAY_FRAMES {
+			p.open_bus &= ~(u8(1) << uint(i))
+		}
+	}
+	return p.open_bus
+}
+
+// Drives the bits in `mask` with `v`, refreshing their decay timers.
+@(private = "file")
+latch_refresh :: proc(p: ^Ppu, v: u8, mask: u8) {
+	p.open_bus = (p.open_bus & ~mask) | (v & mask)
+	for i in 0 ..< 8 {
+		if mask & v & (1 << uint(i)) != 0 {
+			p.decay_at[i] = p.frame_count
+		}
+	}
+}
+
 ppu_reg_read :: proc(c: ^Console, reg: u16) -> u8 {
 	p := &c.ppu
 	switch reg & 7 {
 	case 2:
-		v := (p.status & 0xE0) | (p.open_bus & 0x1F)
+		if p.scanline == VBLANK_LINE && p.dot == 1 {
+			// one PPU clock before VBlank: the flag (and its NMI) never happen
+			p.suppress_vbl = true
+		}
+		v := (p.status & 0xE0) | (latch_value(p) & 0x1F)
+		latch_refresh(p, v, 0xE0)
 		p.status &= 0x7F
 		p.w = false
-		p.open_bus = v
 		return v
 	case 4:
-		p.open_bus = p.oam[p.oam_addr]
-		return p.open_bus
+		v := p.oam[p.oam_addr]
+		if p.oam_addr & 3 == 2 {
+			v &= 0xE3 // attribute bits 2-4 do not exist
+		}
+		latch_refresh(p, v, 0xFF)
+		return v
 	case 7:
 		addr := p.v & 0x3FFF
 		v: u8
 		if addr >= 0x3F00 {
 			// Palette reads are immediate; the buffer gets the nametable underneath.
-			v = (ppu_mem_read(c, addr) & 0x3F) | (p.open_bus & 0xC0)
+			v = (ppu_mem_read(c, addr) & 0x3F) | (latch_value(p) & 0xC0)
 			p.read_buffer = ppu_mem_read(c, addr - 0x1000)
+			latch_refresh(p, v, 0x3F)
 		} else {
 			v = p.read_buffer
 			p.read_buffer = ppu_mem_read(c, addr)
+			latch_refresh(p, v, 0xFF)
 		}
 		p.v += (p.ctrl & 0x04 != 0) ? 32 : 1
 		cart_ppu_address(&c.cart, p.v & 0x3FFF, p.dots)
-		p.open_bus = v
 		return v
 	}
-	return p.open_bus
+	return latch_value(p)
 }
 
 ppu_reg_write :: proc(c: ^Console, reg: u16, value: u8) {
 	p := &c.ppu
-	p.open_bus = value
+	latch_refresh(p, value, 0xFF)
 	switch reg & 7 {
 	case 0:
 		p.ctrl = value
@@ -250,12 +287,10 @@ fetch_background :: proc(c: ^Console) {
 		if p.v & 0x40 != 0 {at >>= 4}
 		if p.v & 0x02 != 0 {at >>= 2}
 		p.at_latch = at & 3
-	case 3:
-		// The pattern address reaches the bus a dot before the data is latched,
-		// which is what A12-watching mappers see.
+	case 4:
 		base := u16(p.ctrl & 0x10) << 8
 		p.lo_latch = ppu_mem_read(c, base + u16(p.nt_latch) * 16 + ((p.v >> 12) & 7))
-	case 5:
+	case 6:
 		base := u16(p.ctrl & 0x10) << 8
 		p.hi_latch = ppu_mem_read(c, base + u16(p.nt_latch) * 16 + ((p.v >> 12) & 7) + 8)
 	case 7:
@@ -458,7 +493,10 @@ ppu_step :: proc(c: ^Console) {
 		}
 	}
 	if p.scanline == VBLANK_LINE && p.dot == 1 {
-		p.status |= 0x80
+		if !p.suppress_vbl {
+			p.status |= 0x80
+		}
+		p.suppress_vbl = false
 		p.frame_ready = true
 		p.frame_count += 1
 	}
@@ -467,9 +505,10 @@ ppu_step :: proc(c: ^Console) {
 	}
 
 	// Advance. Odd frames skip the last pre-render dot when rendering.
-	if prerender && p.dot == 339 && p.odd_frame && rendering && !p.pal {
+	if prerender && p.dot == 339 && p.odd_frame && p.render_prev && !p.pal {
 		p.dot = 340
 	}
+	p.render_prev = rendering
 	p.dot += 1
 	if p.dot > 340 {
 		p.dot = 0

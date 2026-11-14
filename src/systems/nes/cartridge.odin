@@ -379,7 +379,7 @@ cart_ppu_address :: proc(cart: ^Cartridge, addr: u16, dot: u64) {
 		return
 	}
 	high := addr & 0x1000 != 0
-	if high && !cart.a12_high && dot - cart.a12_low_at >= 9 {
+	if high && !cart.a12_high && dot - cart.a12_low_at >= 10 {
 		mmc3_clock(cart)
 	} else if !high && cart.a12_high {
 		cart.a12_low_at = dot
