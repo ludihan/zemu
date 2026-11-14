@@ -311,12 +311,13 @@ begin_window :: proc(ctx: ^Context, w: ^Window) -> bool {
 	}
 	text_shadowed(ctx, title.x + 4, title.y + 2, w.title, t.title_text)
 
-	close := Rect{r.x + r.w - 12, r.y + 2, 10, 9}
+	// 9x9 box with the 5x5 cross glyph centered in it
+	close := Rect{r.x + r.w - 12, r.y + 2, 9, 9}
 	has := has_mouse(ctx)
 	close_hot := has && rect_contains(close, ctx.mouse)
 	fill_rect(ctx, close, close_hot ? t.close_hot : t.close)
 	bevel(ctx, close, t.border_light, t.border_dark)
-	glyph(ctx, close.x + 2, close.y, int(Symbol.Close) - FIRST_GLYPH, t.title_text)
+	glyph(ctx, close.x + 2, close.y + 1, int(Symbol.Close) - FIRST_GLYPH, t.title_text)
 
 	if has && ctx.mouse_released && close_hot && rect_contains(close, ctx.press_pos) {
 		w.open = false
@@ -506,39 +507,54 @@ text_scaled :: proc(ctx: ^Context, x, y: i32, s: string, factor: i32, c: Color) 
 	}
 }
 
-// The mouse pointer is drawn by the toolkit, as a chunky pixel arrow at the
-// interface scale, rather than left to the operating system.
+// The mouse pointer is drawn by the toolkit at the interface scale: a
+// shaded blue arrow with a hard outline and a soft drop shadow.
 @(private = "file", rodata)
 CURSOR := [?]string {
-	"X.......",
-	"XX......",
-	"XWX.....",
-	"XWWX....",
-	"XWWWX...",
-	"XWWWWX..",
-	"XWWWWWX.",
-	"XWWWWWWX",
-	"XWWWWXXX",
-	"XWXWWX..",
-	"XX.XWWX.",
-	"X..XWWX.",
-	"....XWWX",
-	"....XXX.",
+	"K...........",
+	"KK..........",
+	"KWK.........",
+	"KWLK........",
+	"KWLLK.......",
+	"KWLLMK......",
+	"KWLLMMK.....",
+	"KWLLMMMK....",
+	"KWLLMMMDK...",
+	"KWLLMMMDDK..",
+	"KWLLMMMDDDK.",
+	"KWLLMMKKKKKK",
+	"KWLMKMDK....",
+	"KWMK.KMDK...",
+	"KMK..KMDK...",
+	"KK....KMDK..",
+	"K.....KMDK..",
+	".......KKK..",
 }
 
 draw_cursor :: proc(ctx: ^Context) {
 	if !ctx.mouse_inside {
 		return
 	}
+	m := ctx.mouse
+	for row, y in CURSOR {
+		for ch, x in row {
+			if ch != '.' {
+				fill_rect(ctx, {m.x + i32(x) + 1, m.y + i32(y) + 1, 1, 1}, {0, 0, 0, 110})
+			}
+		}
+	}
 	for row, y in CURSOR {
 		for ch, x in row {
 			c: Color
 			switch ch {
-			case 'X': c = {0, 0, 0, 255}
+			case 'K': c = {0, 0, 24, 255}
 			case 'W': c = {255, 255, 255, 255}
+			case 'L': c = {200, 212, 255, 255}
+			case 'M': c = {120, 136, 232, 255}
+			case 'D': c = {48, 56, 148, 255}
 			case: continue
 			}
-			fill_rect(ctx, {ctx.mouse.x + i32(x), ctx.mouse.y + i32(y), 1, 1}, c)
+			fill_rect(ctx, {m.x + i32(x), m.y + i32(y), 1, 1}, c)
 		}
 	}
 }
