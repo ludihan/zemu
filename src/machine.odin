@@ -71,7 +71,12 @@ machine_create :: proc(kind: emu.System_Kind, path: string, bios: []u8) -> (mach
 	case .SNES:
 		rom := read_rom(path) or_return
 		defer delete(rom)
-		return snes.create(rom, pal)
+		msu, _ := msu1_open(path)
+		c, create_err := snes.create(rom, pal, msu)
+		if create_err != .None && msu.close != nil {
+			msu.close(msu.user)
+		}
+		return c, create_err
 	case .GB:
 		rom := read_rom(path) or_return
 		defer delete(rom)
