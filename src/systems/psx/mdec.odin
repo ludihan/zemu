@@ -72,6 +72,7 @@ mdec_status :: proc(m: ^Mdec) -> u32 {
 	if m.signed {s |= 1 << 24}
 	if m.bit15 {s |= 1 << 23}
 	s |= u32(max(m.words_left - 1, 0)) & 0xFFFF
+	s |= 4 << 16 // current block: blocks are decoded at once, so it reads as Y (4)
 	return s
 }
 
@@ -168,14 +169,22 @@ decode_block :: proc(m: ^Mdec, pos: ^int, table: int, out: ^[64]i32) -> bool {
 	first := m.input[pos^]
 	pos^ += 1
 	qscale := i32(first >> 10)
-	dc := i32(i16(first << 6)) >> 6
 	k := 0
-	val := dc * i32(q[0])
+	n := first
 	for {
+		// Coefficients are kept with four fraction bits: the scaled value,
+		// nudged half a step toward zero (as Mednafen models the hardware;
+		// the result matches hardware MDEC output in JaCzekanski's ps1-tests).
+		ci := i32(i16(n << 6)) >> 6
+		val: i32
 		if qscale == 0 {
-			val = dc * 2
+			val = ci * 2 << 4
+		} else {
+			qk := k == 0 ? i32(q[0]) : qscale * i32(q[k])
+			val = (k == 0 ? ci * qk : (ci * qk) >> 3) << 4
+			if ci < 0 {val += 8} else if ci > 0 {val -= 8}
 		}
-		val = clamp(val, -0x400, 0x3FF)
+		val = clamp(val, -0x4000, 0x3FFF)
 		if qscale > 0 {
 			coeffs[ZAGZIG[k]] = val
 		} else {
@@ -184,7 +193,7 @@ decode_block :: proc(m: ^Mdec, pos: ^int, table: int, out: ^[64]i32) -> bool {
 		if pos^ >= len(m.input) {
 			break
 		}
-		n := m.input[pos^]
+		n = m.input[pos^]
 		pos^ += 1
 		if n == 0xFE00 {
 			break
@@ -193,33 +202,32 @@ decode_block :: proc(m: ^Mdec, pos: ^int, table: int, out: ^[64]i32) -> bool {
 		if k > 63 {
 			break
 		}
-		dc = i32(i16(n << 6)) >> 6
-		val = (dc * i32(q[k]) * qscale + 4) / 8
 	}
 	idct(m, &coeffs, out)
 	return true
 }
 
+// Two 1-D passes, each writing its result transposed, with the scale matrix
+// cut to 13 bits; the first pass keeps 16 bits, the second rounds.
 @(private = "file")
 idct :: proc(m: ^Mdec, src: ^[64]i32, dst: ^[64]i32) {
-	tmp: [64]i64
-	for x in 0 ..< 8 {
-		for y in 0 ..< 8 {
+	tmp: [64]i32
+	for row in 0 ..< 8 {
+		for x in 0 ..< 8 {
 			sum: i64
-			for z in 0 ..< 8 {
-				sum += i64(src[z * 8 + x]) * i64(m.scale[z * 8 + y]) // columns
+			for u in 0 ..< 8 {
+				sum += i64(src[row * 8 + u]) * i64(m.scale[u * 8 + x] >> 3)
 			}
-			tmp[y * 8 + x] = sum
+			tmp[x * 8 + row] = i32(i16(sum >> 14))
 		}
 	}
-	for x in 0 ..< 8 {
-		for y in 0 ..< 8 {
+	for row in 0 ..< 8 {
+		for x in 0 ..< 8 {
 			sum: i64
-			for z in 0 ..< 8 {
-				sum += tmp[y * 8 + z] * i64(m.scale[z * 8 + x])
+			for u in 0 ..< 8 {
+				sum += i64(tmp[row * 8 + u]) * i64(m.scale[u * 8 + x] >> 3)
 			}
-			// two passes of 1.15 fixed-point scaling
-			dst[y * 8 + x] = i32(clamp((sum + (1 << 31)) >> 32, -128, 127))
+			dst[x * 8 + row] = i32(clamp((sum + 0x8000) >> 16, -128, 127))
 		}
 	}
 }
@@ -315,7 +323,9 @@ emit_mono :: proc(m: ^Mdec, blk: ^[64]i32) {
 		for i := 0; i < 64; i += 8 {
 			w: u32
 			for k in 0 ..< 8 {
-				w |= u32(vals[i + k] >> 4) << (u32(k) * 4)
+				// 4-bit output rounds to the nearest step and saturates
+				c := clamp((blk[i + k] + 8) >> 4, -8, 7)
+				w |= u32(m.signed ? c & 15 : c + 8) << (u32(k) * 4)
 			}
 			append(&m.output, w)
 		}
