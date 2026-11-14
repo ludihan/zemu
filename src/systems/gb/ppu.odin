@@ -14,6 +14,7 @@ Ppu :: struct {
 	bgp, obp0, obp1: u8,
 	dot:       int,
 	mode:      u8,
+	first_line: bool, // the line right after the LCD turns on (no OAM scan)
 	window_line: int,
 	stat_line: bool, // previous level of the combined STAT interrupt signal
 	frame_ready: bool,
@@ -57,9 +58,12 @@ ppu_write_lcdc :: proc(c: ^Console, v: u8) {
 		p.window_line = 0
 		for &px in p.framebuffer {px = 0xFFFFFF}
 	} else if !was_on && lcd_on(p) {
+		// The first line after switching on is 4 dots short and skips the
+		// OAM scan (STAT reads mode 0 until mode 3 starts).
 		p.ly = 0
-		p.dot = 0
-		p.mode = 2
+		p.dot = 4
+		p.mode = 0
+		p.first_line = true
 		p.window_line = 0
 	}
 }
@@ -125,6 +129,7 @@ ppu_step :: proc(c: ^Console, dots: int) {
 		}
 		if p.dot >= LINE_DOTS {
 			p.dot = 0
+			p.first_line = false
 			p.ly += 1
 			if p.ly == SCREEN_H {
 				p.mode = 1
@@ -140,6 +145,81 @@ ppu_step :: proc(c: ^Console, dots: int) {
 			update_stat(c)
 		}
 	}
+}
+
+// --- CPU access to OAM and VRAM ---------------------------------------------
+
+// OAM is locked during the OAM scan and pixel transfer, VRAM during transfer.
+oam_locked :: proc(p: ^Ppu) -> bool {
+	return lcd_on(p) && p.ly < SCREEN_H && (p.mode == 2 || p.mode == 3)
+}
+
+vram_locked :: proc(p: ^Ppu) -> bool {
+	return lcd_on(p) && p.ly < SCREEN_H && p.mode == 3
+}
+
+// --- DMG OAM corruption bug ----------------------------------------------------
+//
+// On the DMG, a 16-bit increment/decrement of a value in $FE00-$FEFF, or a
+// CPU access to that range, during the OAM scan corrupts the 8-byte row the
+// scan is reading.
+
+// Byte offset of the row being scanned, or -1 outside the scan.
+oam_scan_row :: proc(p: ^Ppu) -> int {
+	// The CPU sees the PPU at the end of its M-cycle; the scan state that
+	// matters is the one during it.
+	d := p.dot - 4
+	if !lcd_on(p) || p.ly >= SCREEN_H || p.first_line || d < 0 || d >= 80 {
+		return -1
+	}
+	row := (d / 4) * 8 + 8
+	return row < 0xA0 ? row : -1
+}
+
+@(private = "file")
+word :: #force_inline proc(p: ^Ppu, i: int) -> u16 {
+	return u16(p.oam[i]) | u16(p.oam[i + 1]) << 8
+}
+
+@(private = "file")
+set_word :: #force_inline proc(p: ^Ppu, i: int, v: u16) {
+	p.oam[i] = u8(v)
+	p.oam[i + 1] = u8(v >> 8)
+}
+
+@(private = "file")
+copy_tail :: proc(p: ^Ppu, row: int) {
+	for k in 2 ..< 8 {
+		p.oam[row + k] = p.oam[row - 8 + k]
+	}
+}
+
+oam_corrupt_write :: proc(p: ^Ppu, row: int) {
+	if row < 8 {return}
+	a, b, c := word(p, row), word(p, row - 8), word(p, row - 4)
+	set_word(p, row, ((a ~ c) & (b ~ c)) ~ c)
+	copy_tail(p, row)
+}
+
+oam_corrupt_read :: proc(p: ^Ppu, row: int) {
+	if row < 8 {return}
+	a, b, c := word(p, row), word(p, row - 8), word(p, row - 4)
+	set_word(p, row, b | (a & c))
+	copy_tail(p, row)
+}
+
+// A read combined with an increment/decrement (LD A,(HL+), POP).
+oam_corrupt_read_inc :: proc(p: ^Ppu, row: int) {
+	if row >= 0x20 && row < 0x98 {
+		a, b, c, d := word(p, row - 16), word(p, row - 8), word(p, row), word(p, row - 4)
+		set_word(p, row - 8, (b & (a | c | d)) | (a & c & d))
+		for k in 0 ..< 8 {
+			v := p.oam[row - 8 + k]
+			p.oam[row + k] = v
+			p.oam[row - 16 + k] = v
+		}
+	}
+	oam_corrupt_read(p, row)
 }
 
 // --- rendering -------------------------------------------------------------

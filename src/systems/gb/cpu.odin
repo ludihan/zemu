@@ -59,6 +59,7 @@ fetch16 :: #force_inline proc(c: ^Console) -> u16 {
 @(private = "file")
 push16 :: proc(c: ^Console, v: u16) {
 	tick(c)
+	oam_bug_idu(c, c.cpu.sp)
 	c.cpu.sp -= 1
 	write(c, c.cpu.sp, u8(v >> 8))
 	c.cpu.sp -= 1
@@ -67,10 +68,12 @@ push16 :: proc(c: ^Console, v: u16) {
 
 @(private = "file")
 pop16 :: proc(c: ^Console) -> u16 {
+	c.oam_read_inc = true
 	lo := u16(read(c, c.cpu.sp))
 	c.cpu.sp += 1
 	hi := u16(read(c, c.cpu.sp))
 	c.cpu.sp += 1
+	c.oam_read_inc = false
 	return lo | hi << 8
 }
 
@@ -297,18 +300,26 @@ execute :: proc(c: ^Console, op: u8) {
 	case 0x1A: cpu.a = read(c, get_de(cpu))
 	case 0x2A:
 		hl := get_hl(cpu)
+		c.oam_read_inc = true
 		cpu.a = read(c, hl)
+		c.oam_read_inc = false
 		set_hl(cpu, hl + 1)
 	case 0x3A:
 		hl := get_hl(cpu)
+		c.oam_read_inc = true
 		cpu.a = read(c, hl)
+		c.oam_read_inc = false
 		set_hl(cpu, hl - 1)
 	case 0x03, 0x13, 0x23, 0x33: // INC rr
-		set_rp(cpu, op >> 4, get_rp(cpu, op >> 4) + 1)
+		v := get_rp(cpu, op >> 4)
+		set_rp(cpu, op >> 4, v + 1)
 		tick(c)
+		oam_bug_idu(c, v)
 	case 0x0B, 0x1B, 0x2B, 0x3B: // DEC rr
-		set_rp(cpu, op >> 4, get_rp(cpu, op >> 4) - 1)
+		v := get_rp(cpu, op >> 4)
+		set_rp(cpu, op >> 4, v - 1)
 		tick(c)
+		oam_bug_idu(c, v)
 	case 0x09, 0x19, 0x29, 0x39: // ADD HL,rr
 		hl := get_hl(cpu)
 		v := get_rp(cpu, op >> 4)

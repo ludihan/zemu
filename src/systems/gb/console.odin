@@ -14,6 +14,7 @@ Console :: struct {
 	wram:         [8][0x1000]u8,
 	hram:         [0x7F]u8,
 	ie, if_:      u8,
+	oam_read_inc: bool, // the current read also increments its pointer (OAM bug pattern)
 
 	// timer
 	div:          u16, // internal 16-bit divider; DIV is the high byte
@@ -44,7 +45,15 @@ Console :: struct {
 	patches:      emu.Patch_List, // Game Genie
 }
 
-create :: proc(rom: []u8, allocator := context.allocator) -> (^Console, emu.Load_Error) {
+// Which hardware to emulate. Auto follows the cartridge header (CGB for
+// CGB-only and CGB-enhanced games).
+Model :: enum u8 {
+	Auto,
+	Dmg,
+	Cgb,
+}
+
+create :: proc(rom: []u8, model := Model.Auto, allocator := context.allocator) -> (^Console, emu.Load_Error) {
 	c, err := new(Console, allocator)
 	if err != nil {
 		return nil, .Out_Of_Memory
@@ -53,7 +62,11 @@ create :: proc(rom: []u8, allocator := context.allocator) -> (^Console, emu.Load
 		free(c, allocator)
 		return nil, load_err
 	}
-	c.cgb = c.cart.cgb
+	switch model {
+	case .Auto: c.cgb = c.cart.cgb
+	case .Dmg:  c.cgb = false
+	case .Cgb:  c.cgb = true
+	}
 	c.fingerprint = emu.fingerprint(rom)
 	reset(c)
 	return c, .None
@@ -71,6 +84,7 @@ reset :: proc(c: ^Console) {
 	cart_reset(&c.cart)
 	cpu_reset(c)
 	ppu_reset(&c.ppu)
+	c.apu.cgb = c.cgb
 	apu_reset(&c.apu)
 	c.ie = 0
 	c.if_ = 0xE1
@@ -186,12 +200,55 @@ tick :: proc(c: ^Console) {
 
 read :: proc(c: ^Console, addr: u16) -> u8 {
 	tick(c)
+	switch addr {
+	case 0xFE00 ..= 0xFEFF:
+		if !c.cgb {
+			if row := oam_scan_row(&c.ppu); row >= 0 {
+				if c.oam_read_inc {
+					oam_corrupt_read_inc(&c.ppu, row)
+				} else {
+					oam_corrupt_read(&c.ppu, row)
+				}
+			}
+		}
+		if oam_locked(&c.ppu) {
+			return 0xFF
+		}
+	case 0x8000 ..= 0x9FFF:
+		if vram_locked(&c.ppu) {
+			return 0xFF
+		}
+	}
 	return bus_read(c, addr)
 }
 
 write :: proc(c: ^Console, addr: u16, v: u8) {
 	tick(c)
+	switch addr {
+	case 0xFE00 ..= 0xFEFF:
+		if !c.cgb {
+			if row := oam_scan_row(&c.ppu); row >= 0 {
+				oam_corrupt_write(&c.ppu, row)
+			}
+		}
+		if oam_locked(&c.ppu) {
+			return
+		}
+	case 0x8000 ..= 0x9FFF:
+		if vram_locked(&c.ppu) {
+			return
+		}
+	}
 	bus_write(c, addr, v)
+}
+
+// A 16-bit increment/decrement put `v` on the address bus (DMG OAM bug).
+oam_bug_idu :: proc(c: ^Console, v: u16) {
+	if !c.cgb && v >= 0xFE00 && v <= 0xFEFF {
+		if row := oam_scan_row(&c.ppu); row >= 0 {
+			oam_corrupt_write(&c.ppu, row)
+		}
+	}
 }
 
 @(private = "file")
