@@ -8,6 +8,11 @@ LINE_CYCLES     :: 228
 LINES_PER_FRAME :: 262
 CART_RAM_SIZE   :: 0x8000
 
+Mapper_Kind :: enum u8 {
+	Sega,
+	Codemasters, // bank registers at $0000/$4000/$8000 (Micro Machines, Dizzy, ...)
+}
+
 Console :: struct {
 	z80:          Z80,
 	vdp:          Vdp,
@@ -17,7 +22,8 @@ Console :: struct {
 	ram:          [0x2000]u8,
 	cart_ram:     [CART_RAM_SIZE]u8,
 	cart_ram_used: bool, // a game enabled cartridge RAM: worth saving
-	mapper:       [4]u8, // $FFFC-$FFFF
+	mapper_kind:  Mapper_Kind,
+	mapper:       [4]u8, // Sega: $FFFC-$FFFF; Codemasters: banks for the three slots
 	game_gear:    bool,
 	io_control:   u8,
 	pads:         [2]emu.Buttons,
@@ -55,6 +61,7 @@ create :: proc(rom: []u8, game_gear: bool, allocator := context.allocator) -> (^
 		c.rom[i] = 0xFF
 	}
 	c.rom_banks = size / 0x4000
+	c.mapper_kind = detect_mapper(c.rom)
 	c.game_gear = game_gear
 	c.vdp.game_gear = game_gear
 	c.fingerprint = emu.fingerprint(data)
@@ -76,7 +83,10 @@ reset :: proc(c: ^Console) {
 	z80_reset(&c.z80)
 	vdp_reset(&c.vdp)
 	psg_reset(&c.psg)
-	c.mapper = {0, 0, 1, 2}
+	switch c.mapper_kind {
+	case .Sega:        c.mapper = {0, 0, 1, 2}
+	case .Codemasters: c.mapper = {0, 1, 0, 0}
+	}
 	c.line = LINES_PER_FRAME - 1 // the first line transition starts line 0
 	c.line_cycles = 0
 	c.z80.sp = 0xDFF0
@@ -136,8 +146,58 @@ rom_byte :: #force_inline proc(c: ^Console, bank: u8, addr: u16) -> u8 {
 	return c.rom[b * 0x4000 + int(addr & 0x3FFF)]
 }
 
+// Codemasters cartridges carry their own header at $7FE0, whose checksum
+// at $7FE6 and its complement at $7FE8 add up to $10000.
+@(private = "file")
+detect_mapper :: proc(rom: []u8) -> Mapper_Kind {
+	if len(rom) < 0x8000 {
+		return .Sega
+	}
+	sum := int(rom[0x7FE6]) | int(rom[0x7FE7]) << 8
+	inverse := int(rom[0x7FE8]) | int(rom[0x7FE9]) << 8
+	return sum != 0 && sum + inverse == 0x10000 ? .Codemasters : .Sega
+}
+
+@(private = "file")
+codemasters_read :: proc(c: ^Console, addr: u16) -> u8 {
+	switch addr {
+	case 0x0000 ..= 0x3FFF: return rom_byte(c, c.mapper[0], addr)
+	case 0x4000 ..= 0x7FFF: return rom_byte(c, c.mapper[1], addr)
+	case 0x8000 ..= 0xBFFF:
+		// bit 7 of the $4000 register maps 8 KiB of cartridge RAM at $A000
+		if addr >= 0xA000 && c.mapper[1] & 0x80 != 0 {
+			return c.cart_ram[addr & 0x1FFF]
+		}
+		return rom_byte(c, c.mapper[2], addr)
+	}
+	return c.ram[addr & 0x1FFF]
+}
+
+@(private = "file")
+codemasters_write :: proc(c: ^Console, addr: u16, v: u8) {
+	switch addr {
+	case 0x0000: c.mapper[0] = v
+	case 0x4000: c.mapper[1] = v
+	case 0x8000: c.mapper[2] = v
+	case 0xA000 ..= 0xBFFF:
+		if c.mapper[1] & 0x80 != 0 {
+			c.cart_ram[addr & 0x1FFF] = v
+			c.cart_ram_used = true
+		}
+	case 0xC000 ..= 0xFFFF:
+		c.ram[addr & 0x1FFF] = v
+	}
+}
+
 bus_read :: proc(user: rawptr, addr: u16) -> u8 {
 	c := (^Console)(user)
+	if c.mapper_kind == .Codemasters {
+		v := codemasters_read(c, addr)
+		if addr < 0xC000 && c.patches.count > 0 {
+			v = emu.patch_apply(&c.patches, u32(addr), v)
+		}
+		return v
+	}
 	v: u8
 	switch addr {
 	case 0x0000 ..= 0x03FF:
@@ -163,6 +223,10 @@ bus_read :: proc(user: rawptr, addr: u16) -> u8 {
 
 bus_write :: proc(user: rawptr, addr: u16, v: u8) {
 	c := (^Console)(user)
+	if c.mapper_kind == .Codemasters {
+		codemasters_write(c, addr, v)
+		return
+	}
 	switch addr {
 	case 0x8000 ..= 0xBFFF:
 		if c.mapper[0] & 0x08 != 0 {
