@@ -188,7 +188,7 @@ decode_cheat :: proc(kind: emu.System_Kind, code: string) -> (c: Cheat, ok: bool
 			return {kind = .Ram_Write8, addr = addr, value = u16((v >> 16) & 0xFF), compare = -1}, true
 		}
 		return decode_gb_genie(s)
-	case .SMS, .GG:
+	case .SMS, .GG, .SG1000:
 		// Pro Action Replay: 00AAAAVV writes RAM every frame
 		if len(s) == 8 {
 			v := hex_value(s) or_return

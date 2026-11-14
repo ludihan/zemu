@@ -81,10 +81,11 @@ machine_create :: proc(kind: emu.System_Kind, path: string, bios: []u8) -> (mach
 		rom := read_rom(path) or_return
 		defer delete(rom)
 		return gb.create(rom)
-	case .SMS, .GG:
+	case .SMS, .GG, .SG1000:
 		rom := read_rom(path) or_return
 		defer delete(rom)
-		return sms.create(rom, kind == .GG)
+		model := kind == .GG ? sms.Model.Game_Gear : (kind == .SG1000 ? .SG1000 : .Master_System)
+		return sms.create(rom, model)
 	case .GBA:
 		rom := read_rom(path) or_return
 		defer delete(rom)
@@ -135,7 +136,12 @@ machine_kind :: proc(m: Machine) -> emu.System_Kind {
 	case ^gb.Console:
 		return .GB
 	case ^sms.Console:
-		return c.game_gear ? .GG : .SMS
+		switch c.model {
+		case .Game_Gear: return .GG
+		case .SG1000:    return .SG1000
+		case .Master_System:
+		}
+		return .SMS
 	case ^gba.Console:
 		return .GBA
 	}

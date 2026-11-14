@@ -28,7 +28,7 @@ Options :: struct {
 
 USAGE :: `usage: zemu [rom] [options]
 
-  rom                 .nes .sfc .smc .gb .gbc .gba (Nintendo), .sms .gg (Sega),
+  rom                 .nes .sfc .smc .gb .gbc .gba (Nintendo), .sms .gg .sg (Sega),
                       .cue .bin .iso .exe (PlayStation)
   --ui-scale N        interface scale, 1-8
   --frames N          run N frames as fast as possible, then exit

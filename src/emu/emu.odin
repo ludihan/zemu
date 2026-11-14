@@ -97,6 +97,7 @@ System_Kind :: enum u8 {
 	SMS,
 	GG,
 	GBA,
+	SG1000,
 }
 
 System_Info :: struct {
@@ -167,6 +168,14 @@ SYSTEM_INFO := [System_Kind]System_Info {
 		fps         = 59.7275,
 		sample_rate = 48000,
 		aspect      = 3.0 / 2.0,
+	},
+	.SG1000 = {
+		name        = "Sega SG-1000",
+		short_name  = "SG",
+		extensions  = {".sg"},
+		fps         = 59.9227,
+		sample_rate = 48000,
+		aspect      = 4.0 / 3.0,
 	},
 }
 
