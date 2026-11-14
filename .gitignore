@@ -1,0 +1,7 @@
+/build/
+*.exe
+*.pdb
+*.dll
+!/vendor/**/*.dll
+*.srm
+*.bmp
