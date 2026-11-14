@@ -122,6 +122,7 @@ Apu :: struct {
 	frame_irq_inhibit: bool,
 	frame_irq:   bool,
 	frame_cycle: u32,
+	last_4017:   u8,
 	frame_reset_delay: u8, // $4017 writes take effect 3-4 CPU cycles later
 	odd_cycle:   bool,
 
@@ -172,6 +173,22 @@ apu_reset :: proc(a: ^Apu) {
 	a.dmc.silent = true
 	a.dmc.bits = 8
 	a.pulse[0].ones_complement = true
+	// At power it is as if $00 had been written to $4017.
+	apu_write(a, 0x4017, 0)
+}
+
+// The reset button: $4015 is cleared, the frame counter gets its last mode
+// written again, IRQ flags drop and the pulse/noise length counters stop
+// being halted. Everything else (the triangle included) keeps its state.
+apu_soft_reset :: proc(a: ^Apu) {
+	apu_write(a, 0x4015, 0)
+	a.pulse[0].env.loop = false
+	a.pulse[1].env.loop = false
+	a.noise.env.loop = false
+	a.halt_dirty = {}
+	a.frame_irq = false
+	a.dmc.irq = false
+	apu_write(a, 0x4017, a.last_4017)
 }
 
 // --- register writes -------------------------------------------------------
@@ -260,6 +277,17 @@ apu_write :: proc(a: ^Apu, addr: u16, v: u8) {
 			a.dmc.remaining = a.dmc.sample_len
 		}
 	case 0x4017:
+		if a.frame_reset_delay > 0 {
+			// A write while the previous one is still pending: that one
+			// completes first, so both take effect.
+			a.frame_reset_delay = 0
+			a.frame_cycle = 0
+			if a.frame_mode5 {
+				quarter_frame(a)
+				half_frame(a)
+			}
+		}
+		a.last_4017 = v
 		a.frame_mode5 = v & 0x80 != 0
 		a.frame_irq_inhibit = v & 0x40 != 0
 		if a.frame_irq_inhibit {a.frame_irq = false}
@@ -461,23 +489,35 @@ apply_pending_length :: proc(a: ^Apu) {
 	a.length_clocked = false
 }
 
+// Delivers the byte a DMC DMA read fetched.
+apu_dmc_fill :: proc(c: ^Console, v: u8) {
+	d := &c.apu.dmc
+	if d.remaining == 0 {
+		return
+	}
+	d.buffer = v
+	d.buffer_full = true
+	d.addr = d.addr == 0xFFFF ? 0x8000 : d.addr + 1
+	d.remaining -= 1
+	if d.remaining == 0 {
+		if d.loop {
+			d.addr = d.sample_addr
+			d.remaining = d.sample_len
+		} else if d.irq_enabled {
+			d.irq = true
+		}
+	}
+}
+
 @(private = "file")
 step_dmc :: proc(c: ^Console) {
 	d := &c.apu.dmc
-	if !d.buffer_full && d.remaining > 0 {
-		d.buffer = bus_read(c, d.addr)
-		c.dmc_stall += 4
-		d.buffer_full = true
-		d.addr = d.addr == 0xFFFF ? 0x8000 : d.addr + 1
-		d.remaining -= 1
-		if d.remaining == 0 {
-			if d.loop {
-				d.addr = d.sample_addr
-				d.remaining = d.sample_len
-			} else if d.irq_enabled {
-				d.irq = true
-			}
-		}
+	if !d.buffer_full && d.remaining > 0 && !c.dma.dmc_running {
+		// The sample byte is fetched by DMA: the CPU is halted on its next
+		// read cycle and the byte arrives through apu_dmc_fill.
+		c.dma.dmc_running = true
+		c.dma.need_halt = true
+		c.dma.need_dummy_read = true
 	}
 	if d.timer > 0 {
 		d.timer -= 1
