@@ -65,6 +65,13 @@ for Select. You can remap them in *CONFIG > Input*. Gamepads work
 automatically with SDL's standard mapping. On a PlayStation pad, Cross is B,
 Circle is A, Square is Y and Triangle is X.
 
+### Cheats
+
+*CHEAT > Cheat codes* takes Game Genie codes (NES, SNES `XXXX-XXXX`, Game
+Boy `ABC-DEF-GHI`), Pro Action Replay (SNES), GameShark (Game Boy, and
+PlayStation `80XXXXXX YYYY` / `30XXXXXX 00YY`) and raw `ADDRESS:VALUE` RAM
+writes. Codes are kept per game in `saves/<game>.cht`.
+
 ### Video
 
 Games are always letterboxed with black bars and never stretched. The
@@ -89,6 +96,7 @@ directory, for example `~/.local/share/zemu/zemu/` on Linux or
 * `zemu.cfg`: settings, key bindings and recent games
 * `saves/<game>.srm`: NES/SNES battery RAM
 * `saves/<game>.mcr`: PlayStation memory card (slot 1), written only once a game saves
+* `saves/<game>.cht`: cheat codes
 * `saves/<game>.st0`–`.st9`: save states. They are tied to the exact game and
   zemu build that made them, and anything else is refused.
 

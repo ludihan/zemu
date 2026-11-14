@@ -65,6 +65,12 @@ App :: struct {
 	win_paths:   gui.Window,
 	win_about:   gui.Window,
 	win_message: gui.Window,
+	win_cheats:  gui.Window,
+	cheats:      Cheat_List,
+	cheat_list:  gui.List_State,
+	cheat_code_field: gui.Text_Field,
+	cheat_name_field: gui.Text_Field,
+	cheat_error: string,
 	browser:     Browser,
 	message:     [256]u8,
 	message_len: int,
@@ -176,7 +182,6 @@ show_message :: proc(app: ^App, format: string, args: ..any) {
 
 // --- game lifetime ---------------------------------------------------------
 
-@(private = "file")
 save_path :: proc(app: ^App, rom: string, ext: string) -> string {
 	name := fmt.tprintf("%s%s", os.stem(rom), ext)
 	p, _ := os.join_path({app.data_dir, "saves", name}, context.temp_allocator)
@@ -204,11 +209,17 @@ write_save_ram :: proc(app: ^App) {
 	}
 }
 
+cheat_path :: proc(app: ^App) -> string {
+	return save_path(app, app.rom_path, ".cht")
+}
+
 app_close_game :: proc(app: ^App) {
 	if app.machine == nil {
 		return
 	}
 	write_save_ram(app)
+	cheats_save(&app.cheats, cheat_path(app))
+	app.cheats = {}
 	machine_destroy(&app.machine)
 	delete(app.rom_path)
 	app.rom_path = ""
@@ -270,6 +281,9 @@ app_load_game :: proc(app: ^App, path: string) -> bool {
 		machine_load_save_ram(app.machine, sram)
 	}
 
+	cheats_load(&app.cheats, kind, cheat_path(app))
+	cheats_sync(app.machine, &app.cheats)
+
 	info := emu.SYSTEM_INFO[kind]
 	if !audio_open(&app.audio, info.sample_rate) {
 		log.warnf("audio unavailable: %s", sdl.GetError())
@@ -319,6 +333,7 @@ app_load_state :: proc(app: ^App) {
 		osd_show(app, "State %d is from another game or version", app.state_slot)
 		return
 	}
+	cheats_sync(app.machine, &app.cheats) // states carry the patch list they were saved with
 	app.menu_active = false
 	osd_show(app, "State %d loaded", app.state_slot)
 }
@@ -441,6 +456,10 @@ app_handle_events :: proc(app: ^App) {
 		case .GAMEPAD_REMOVED:
 			gamepad_removed(&app.pads, e.gdevice.which)
 		case .KEY_DOWN:
+			if app.menu_active && app.ui.text_focus != nil {
+				gui.handle_event(&app.ui, &e) // typing into a text field
+				continue
+			}
 			if app.rebinding != nil {
 				ui_finish_rebind(app, e.key.scancode)
 				continue
@@ -493,6 +512,7 @@ app_emulate :: proc(app: ^App, dt: f64) {
 	}
 
 	for _ in 0 ..< frames {
+		cheats_apply(app.machine, &app.cheats)
 		machine_run_frame(app.machine, input, &app.audio.buffer)
 		audio_submit(&app.audio, app.cfg.audio, app.cfg.volume, app.fast_forward)
 		app.fps_frames += 1

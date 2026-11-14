@@ -17,7 +17,8 @@ ui_init_windows :: proc(app: ^App) {
 	app.win_paths   = {title = "PATHS", rect = {50, 70, 300, 110}}
 	app.win_about   = {title = "ABOUT", rect = {90, 50, 264, 140}}
 	app.win_message = {title = "MESSAGE", rect = {100, 80, 260, 84}}
-	for w in ([]^gui.Window{&app.win_load, &app.win_input, &app.win_video, &app.win_ui, &app.win_sound, &app.win_paths, &app.win_about, &app.win_message}) {
+	app.win_cheats  = {title = "CHEATS", rect = {30, 26, 320, 186}}
+	for w in ([]^gui.Window{&app.win_load, &app.win_input, &app.win_video, &app.win_ui, &app.win_sound, &app.win_paths, &app.win_about, &app.win_message, &app.win_cheats}) {
 		gui.add_window(ctx, w)
 	}
 }
@@ -55,6 +56,7 @@ ui_finish_rebind :: proc(app: ^App, sc: sdl.Scancode) {
 Menu_Id :: enum {
 	Game,
 	Config,
+	Cheat,
 	Misc,
 }
 
@@ -98,9 +100,14 @@ ui_draw_menu_bar :: proc(app: ^App) {
 		{separator = true},
 		{label = "About..."},
 	}
+	cheat_items := []gui.Menu_Item {
+		{label = "Cheat codes...", disabled = !has_game},
+		{label = "Disable all", disabled = !has_game || app.cheats.count == 0},
+	}
 	menus := []gui.Menu {
 		{title = "GAME", items = game_items[:]},
 		{title = "CONFIG", items = config_items},
+		{title = "CHEAT", items = cheat_items},
 		{title = "MISC", items = misc_items},
 	}
 
@@ -135,6 +142,17 @@ ui_draw_menu_bar :: proc(app: ^App) {
 		if item >= 0 && item < len(windows) {
 			gui.open_window(&app.ui, windows[item])
 		}
+	case .Cheat:
+		switch item {
+		case 0:
+			gui.open_window(&app.ui, &app.win_cheats)
+		case 1:
+			for i in 0 ..< app.cheats.count {
+				app.cheats.items[i].enabled = false
+			}
+			app.cheats.dirty = true
+			cheats_sync(app.machine, &app.cheats)
+		}
 	case .Misc:
 		switch item {
 		case 0: app.cfg.show_fps = !app.cfg.show_fps
@@ -162,6 +180,7 @@ ui_draw_windows :: proc(app: ^App) {
 		case &app.win_paths:   draw_paths_window(app)
 		case &app.win_about:   draw_about_window(app)
 		case &app.win_message: draw_message_window(app)
+		case &app.win_cheats:  draw_cheats_window(app)
 		}
 		gui.end_window(ctx)
 	}
@@ -458,5 +477,77 @@ ui_draw_overlay :: proc(app: ^App) {
 		x := (ctx.size.x - gui.text_width(s)) / 2
 		gui.text(ctx, x + 1, 5, s, {0, 0, 0, 255})
 		gui.text(ctx, x, 4, s, t.text_hot)
+	}
+}
+
+@(private = "file")
+draw_cheats_window :: proc(app: ^App) {
+	ctx := &app.ui
+	if app.machine == nil {
+		app.win_cheats.open = false
+		return
+	}
+	size := [2]i32{app.win_cheats.rect.w - 8, app.win_cheats.rect.h - gui.TITLE_H - 7}
+	list := &app.cheats
+	kind := machine_kind(app.machine)
+
+	items := make([]gui.List_Item, list.count, context.temp_allocator)
+	for i in 0 ..< list.count {
+		c := &list.items[i]
+		items[i] = {
+			text  = fmt.tprintf("%s  %s", cheat_code(c), cheat_name(c)),
+			icon  = c.enabled ? gui.Symbol.Check : nil,
+			color = c.enabled ? nil : ctx.theme.text_dim,
+		}
+	}
+	list_h := size.y - 62
+	res := gui.list_box(ctx, &app.cheat_list, {0, 0, size.x, list_h}, items, ctx.text_focus == nil)
+	sel := app.cheat_list.selected
+	if res.activated && sel < list.count {
+		list.items[sel].enabled = !list.items[sel].enabled
+		list.dirty = true
+		cheats_sync(app.machine, list)
+	}
+
+	y := list_h + 4
+	gui.label(ctx, 0, y + 2, "CODE")
+	submit := gui.text_field(ctx, &app.cheat_code_field, {34, y, 120, 12}, "e.g. SXIOPO")
+	gui.label(ctx, 160, y + 2, "NAME")
+	submit |= gui.text_field(ctx, &app.cheat_name_field, {194, y, size.x - 194, 12}, "optional")
+	y += 16
+	if gui.button(ctx, {0, y, 50, 14}, "ADD") || submit {
+		code := gui.text_field_string(&app.cheat_code_field)
+		if cheat_add(list, kind, code, gui.text_field_string(&app.cheat_name_field)) {
+			gui.text_field_clear(&app.cheat_code_field)
+			gui.text_field_clear(&app.cheat_name_field)
+			app.cheat_error = ""
+			cheats_sync(app.machine, list)
+			app.cheat_list.selected = list.count - 1
+		} else if code != "" {
+			app.cheat_error = "Code not recognised for this system"
+		}
+	}
+	has_sel := list.count > 0
+	if gui.button(ctx, {54, y, 60, 14}, "TOGGLE", has_sel) && sel < list.count {
+		list.items[sel].enabled = !list.items[sel].enabled
+		list.dirty = true
+		cheats_sync(app.machine, list)
+	}
+	if gui.button(ctx, {118, y, 60, 14}, "REMOVE", has_sel) {
+		cheat_remove(list, sel)
+		cheats_sync(app.machine, list)
+	}
+	y += 18
+	if app.cheat_error != "" {
+		gui.label(ctx, 0, y, app.cheat_error, ctx.theme.text_hot)
+	} else {
+		hint: string
+		switch kind {
+		case .NES:  hint = "Game Genie, or ADDR:VAL for RAM"
+		case .SNES: hint = "Game Genie (XXXX-XXXX) or Action Replay"
+		case .GB:   hint = "Game Genie (ABC-DEF-GHI) or GameShark"
+		case .PSX:  hint = "GameShark (80XXXXXX YYYY / 30XXXXXX 00YY)"
+		}
+		gui.label_dim(ctx, 0, y, hint)
 	}
 }

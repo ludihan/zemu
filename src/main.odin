@@ -21,7 +21,7 @@ Options :: struct {
 	screenshot: string, // with --frames: save the window contents here (BMP)
 	dump_frame: string, // with --frames: save the core's native frame here (BMP)
 	dump_audio: string, // with --frames: save the audio produced here (WAV)
-	open:       string, // with --frames: window to show (load, input, video, ui, sound, paths, about)
+	open:       string, // with --frames: window to show (load, input, video, ui, sound, paths, about, cheats)
 	menu:       bool,   // with --frames: show the menu over the game
 	ui_scale:   int,
 }
@@ -35,7 +35,7 @@ USAGE :: `usage: zemu [rom] [options]
   --dump-frame FILE   with --frames: write the console's native picture to FILE (BMP)
   --dump-audio FILE   with --frames: write the audio produced to FILE (WAV)
   --menu              with --frames: show the menu in the screenshot
-  --open NAME         with --frames: open a menu window (load, input, video, ui, sound, paths, about)
+  --open NAME         with --frames: open a menu window (load, input, video, ui, sound, paths, about, cheats)
 `
 
 parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
@@ -164,6 +164,7 @@ run_headless :: proc(app: ^App, opts: Options) {
 		{"sound", &app.win_sound},
 		{"paths", &app.win_paths},
 		{"about", &app.win_about},
+		{"cheats", &app.win_cheats},
 	}
 	for nw in windows {
 		if nw.name != opts.open {
