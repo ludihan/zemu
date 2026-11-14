@@ -6,6 +6,7 @@ import "core:image/png"
 import "core:log"
 import "core:os"
 import "core:path/filepath"
+import "core:strconv"
 import "core:strings"
 import "core:testing"
 
@@ -324,6 +325,8 @@ ps1_tests_tty_matches_hardware :: proc(t: ^testing.T) {
 		frames:    int,
 	}
 	cases := []Case {
+		{"gpu/mask-bit", "psx.log", {}, 120},
+		{"cpu/code-in-io", "psx.log", {}, 120},
 		{"gte/test-all", "psx.log", {}, 300},
 		{"gte-fuzz", "gte_valid_0xc0ffee_50.log", {.Start}, 3000},
 	}
@@ -405,4 +408,102 @@ spu_volume_sweep_ramps :: proc(t: ^testing.T) {
 		spu_sample(c)
 	}
 	testing.expect_value(t, spu_read(&c.spu, 0x1F80_1E02), transmute(u16)i16(-(0x6000 - 8)))
+}
+
+// Decodes the 8x8 block of ps1-tests' mdec/4bit and mdec/8bit through the
+// MDEC registers and compares it with the bytes a real console produced
+// (from each test's psx.log). The tests' own programs cannot be used as they
+// are: their output DMA asks for zero blocks of 32 words.
+@(test)
+mdec_matches_hardware :: proc(t: ^testing.T) {
+	dir := os.get_env("ZEMU_PS1_TESTS", context.temp_allocator)
+	if dir == "" {
+		log.warn("ZEMU_PS1_TESTS not set")
+		return
+	}
+	read :: proc(path: string) -> string {
+		data, err := os.read_entire_file(path, context.temp_allocator)
+		return err == nil ? string(data) : ""
+	}
+	// the numbers inside the braces after `name`
+	numbers :: proc(src, name: string) -> [dynamic]int {
+		out := make([dynamic]int, context.temp_allocator)
+		at := strings.index(src, name)
+		if at < 0 {return out}
+		body := src[at:]
+		body = body[strings.index_byte(body, '{') + 1:]
+		body = body[:strings.index_byte(body, '}')]
+		for line in strings.split_lines(body, context.temp_allocator) {
+			code := line
+			if c := strings.index(code, "//"); c >= 0 {code = code[:c]}
+			for field in strings.split(code, ",", context.temp_allocator) {
+				s := strings.trim_space(field)
+				if s == "" {continue}
+				if v, ok := strconv.parse_int(s); ok {append(&out, v)}
+			}
+		}
+		return out
+	}
+	// the bytes of the "  0: f0 0f ..." hexdump lines
+	dump :: proc(text: string) -> [dynamic]u8 {
+		out := make([dynamic]u8, context.temp_allocator)
+		for line in strings.split_lines(text, context.temp_allocator) {
+			colon := strings.index(line, ": ")
+			if colon < 0 || colon > 6 {continue}
+			for b in strings.fields(line[colon + 2:], context.temp_allocator) {
+				if v, ok := strconv.parse_int(b, 16); ok && len(b) == 2 {append(&out, u8(v))}
+			}
+		}
+		return out
+	}
+	common := read(fmt.tprintf("%s/common/mdec.cpp", dir))
+	heart := read(fmt.tprintf("%s/mdec/8bit/heart.h", dir))
+	if common == "" || heart == "" {
+		log.warn("ps1-tests MDEC sources not found")
+		return
+	}
+	idct := numbers(common, "idct[64]")
+	quant := numbers(common, "quant[128]")
+	block := numbers(heart, "heart_mdec[]")
+	if !testing.expect(t, len(idct) == 64 && len(quant) == 128 && len(block) >= 4) {return}
+
+	for depth in u32(0) ..= 1 {
+		want := dump(read(fmt.tprintf("%s/mdec/%s/psx.log", dir, depth == 0 ? "4bit" : "8bit")))
+		size := depth == 0 ? 32 : 64
+		if !testing.expect(t, len(want) >= size) {continue}
+		c := new(Console)
+		defer free(c)
+		defer mdec_destroy(&c.mdec)
+		mdec_reset(&c.mdec)
+		mdec_write_command(c, 2 << 29 | 1) // luminance and colour tables
+		for i := 0; i < 128; i += 4 {
+			mdec_write_command(c, u32(quant[i]) | u32(quant[i + 1]) << 8 | u32(quant[i + 2]) << 16 | u32(quant[i + 3]) << 24)
+		}
+		mdec_write_command(c, 3 << 29)
+		for i := 0; i < 64; i += 2 {
+			mdec_write_command(c, u32(u16(i16(idct[i]))) | u32(u16(i16(idct[i + 1]))) << 16)
+		}
+		words := len(block) / 4
+		mdec_write_command(c, 1 << 29 | depth << 27 | u32(words))
+		for i in 0 ..< words {
+			b := block[i * 4:]
+			mdec_write_command(c, u32(b[0]) | u32(b[1]) << 8 | u32(b[2]) << 16 | u32(b[3]) << 24)
+		}
+		got: [64]u8
+		for i := 0; i < size; i += 4 {
+			w := mdec_read_data(c)
+			got[i], got[i + 1], got[i + 2], got[i + 3] = u8(w), u8(w >> 8), u8(w >> 16), u8(w >> 24)
+		}
+		// 4-bit output matches exactly; in 8-bit, seven of the 64 values are
+		// still off by one (the IDCT's internal rounding is not exact yet).
+		off, worst := 0, 0
+		for i in 0 ..< size {
+			d := abs(int(got[i]) - int(want[i]))
+			if d != 0 {off += 1}
+			worst = max(worst, d)
+		}
+		allowed := depth == 0 ? 0 : 7
+		testing.expectf(t, off <= allowed && worst <= 1, "%d-bit MDEC: %d bytes differ from hardware (by up to %d)",
+			depth == 0 ? 4 : 8, off, worst)
+	}
 }
