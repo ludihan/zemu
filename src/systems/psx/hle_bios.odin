@@ -202,43 +202,100 @@ bios_printf :: proc(c: ^Console) {
 			continue
 		}
 		i += 1
-		zero := false
-		left := false
+		zero, left, alt := false, false, false
+		sign: u8 = 0 // '+' or ' ' before non-negative numbers
 		width := 0
-		for i < len(format) && (format[i] == '0' || format[i] == '-') {
-			if format[i] == '0' {zero = true} else {left = true}
+		precision := -1
+		flags: for i < len(format) {
+			switch format[i] {
+			case '0': zero = true
+			case '-': left = true
+			case '#': alt = true
+			case '+': sign = '+'
+			case ' ': if sign == 0 {sign = ' '}
+			case: break flags
+			}
+			i += 1
+		}
+		if i < len(format) && format[i] == '*' {
+			width = int(i32(next_arg(c, &arg_index)))
+			if width < 0 {left, width = true, -width}
 			i += 1
 		}
 		for i < len(format) && format[i] >= '0' && format[i] <= '9' {
 			width = width * 10 + int(format[i] - '0')
 			i += 1
 		}
+		if i < len(format) && format[i] == '.' {
+			i += 1
+			precision = 0
+			if i < len(format) && format[i] == '*' {
+				precision = max(int(i32(next_arg(c, &arg_index))), 0)
+				i += 1
+			}
+			for i < len(format) && format[i] >= '0' && format[i] <= '9' {
+				precision = precision * 10 + int(format[i] - '0')
+				i += 1
+			}
+		}
 		for i < len(format) && (format[i] == 'l' || format[i] == 'h') {
 			i += 1
 		}
 		if i >= len(format) {break}
-		piece: string
+		prefix, digits: string
+		numeric := true
 		switch format[i] {
 		case 'd', 'i':
-			v := i32(next_arg(c, &arg_index))
-			piece = fmt_int(i64(v), 10, false)
-		case 'u': piece = fmt_int(i64(next_arg(c, &arg_index)), 10, false)
-		case 'x': piece = fmt_int(i64(next_arg(c, &arg_index)), 16, false)
-		case 'X': piece = fmt_int(i64(next_arg(c, &arg_index)), 16, true)
+			v := i64(i32(next_arg(c, &arg_index)))
+			if v < 0 {
+				prefix = "-"
+				v = -v
+			} else if sign != 0 {
+				prefix = sign == '+' ? "+" : " "
+			}
+			digits = fmt_int(v, 10, false)
+		case 'u': digits = fmt_int(i64(next_arg(c, &arg_index)), 10, false)
+		case 'o':
+			digits = fmt_int(i64(next_arg(c, &arg_index)), 8, false)
+			if alt && digits != "0" {prefix = "0"}
+		case 'x', 'X':
+			v := next_arg(c, &arg_index)
+			digits = fmt_int(i64(v), 16, format[i] == 'X')
+			if alt && v != 0 {prefix = format[i] == 'X' ? "0X" : "0x"}
 		case 'p':
-			piece = fmt_int(i64(next_arg(c, &arg_index)), 16, false)
+			digits = fmt_int(i64(next_arg(c, &arg_index)), 16, false)
 			width = max(width, 8)
 			zero = true
-		case 'c': piece = strings.clone(string([]u8{u8(next_arg(c, &arg_index))}), context.temp_allocator)
-		case 's': piece = read_cstring(c, next_arg(c, &arg_index))
-		case '%': piece = "%"
-		case: piece = format[i:i + 1]
+		case:
+			numeric = false
+			switch format[i] {
+			case 'c': digits = strings.clone(string([]u8{u8(next_arg(c, &arg_index))}), context.temp_allocator)
+			case 's':
+				digits = read_cstring(c, next_arg(c, &arg_index))
+				if precision >= 0 && precision < len(digits) {digits = digits[:precision]}
+			case '%': digits = "%"
+			case: digits = format[i:i + 1]
+			}
 		}
-		pad := width - len(piece)
+		// precision is a minimum digit count for numbers (and turns off '0')
+		min_digits := 0
+		if numeric && precision >= 0 {
+			min_digits = precision
+			zero = false
+			if precision == 0 && digits == "0" {digits = ""}
+		}
+		lead := max(min_digits - len(digits), 0)
+		pad := width - len(prefix) - lead - len(digits)
+		if numeric && zero && !left {
+			lead += max(pad, 0)
+			pad = 0
+		}
 		if !left {
-			for _ in 0 ..< pad {strings.write_byte(&out, zero ? '0' : ' ')}
+			for _ in 0 ..< pad {strings.write_byte(&out, ' ')}
 		}
-		strings.write_string(&out, piece)
+		strings.write_string(&out, prefix)
+		for _ in 0 ..< lead {strings.write_byte(&out, '0')}
+		strings.write_string(&out, digits)
 		if left {
 			for _ in 0 ..< pad {strings.write_byte(&out, ' ')}
 		}
@@ -257,7 +314,7 @@ fmt_int :: proc(v: i64, base: u64, upper: bool) -> string {
 	n := len(buf)
 	neg := v < 0 && base == 10
 	u := u64(neg ? -v : v)
-	if base == 16 {u &= 0xFFFF_FFFF}
+	if base != 10 {u &= 0xFFFF_FFFF}
 	for {
 		n -= 1
 		buf[n] = digits[u % base]
