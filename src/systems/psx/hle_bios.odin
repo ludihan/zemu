@@ -10,11 +10,7 @@ import "core:strings"
 // and a few library helpers.
 
 Hle_Bios :: struct {
-	custom_exit: u32,     // address of the hook's jmp_buf, 0 = none
-	saved:       [32]u32, // CPU state at the last exception
-	saved_hi:    u32,
-	saved_lo:    u32,
-	saved_epc:   u32,
+	custom_exit: u32, // address of the hook's jmp_buf, 0 = none
 	next_event:  u32,
 	clear_pad:   bool,
 	pad_buf:     [2]u32, // InitPAD buffers, filled at each VBlank once started
@@ -46,12 +42,33 @@ tty_put :: proc(c: ^Console, ch: u8) {
 	}
 }
 
+// Kernel data the emulated BIOS keeps in RAM where the real one does, for
+// programs that look at it: the process table pointer at 0x108 leads to the
+// thread control block that exceptions save the registers to, and A0 table
+// entry 0x40 at 0x300 is the hook for exceptions the kernel cannot handle.
+HLE_PCB :: 0x0000_E000
+HLE_TCB :: 0x0000_E100 // flags, flags2, r0-r31, epc, hi, lo, sr, cause, 9 more
+HLE_KERNEL_STACK :: 0x8000_DFF0 // grows down; handlers called by the kernel run on it
+HLE_UNRESOLVED_HOOK :: 0x0000_0300
+HLE_HANDLER_RETURN :: 0x1FC0_0F00 // a handler the kernel called returns here
+
+// Sets up the kernel data in RAM; called when an EXE starts without a BIOS.
+hle_setup_kernel :: proc(c: ^Console) {
+	write32_phys(c, 0x108, 0x8000_0000 | HLE_PCB)
+	write32_phys(c, 0x10C, 4) // size of the process table
+	write32_phys(c, 0x110, 0x8000_0000 | HLE_TCB)
+	write32_phys(c, 0x114, 0xC0) // size of the thread table
+	write32_phys(c, HLE_PCB, 0x8000_0000 | HLE_TCB)
+	write32_phys(c, HLE_TCB, 0x4000) // in use
+	write32_phys(c, HLE_UNRESOLVED_HOOK, 0)
+}
+
 // Called before each instruction; handles the BIOS entry points.
 // Returns true when it did something in place of the instruction.
 hle_intercept :: proc(c: ^Console) -> bool {
 	cpu := &c.cpu
 	switch cpu.pc & 0x1FFF_FFFF {
-	case 0xA0, 0xB0, 0xC0, 0x80:
+	case 0xA0, 0xB0, 0xC0, 0x80, HLE_HANDLER_RETURN:
 		// A load still in its delay slot lands before the BIOS code would
 		// run (its first instruction completes it); commit it now so it is
 		// neither lost nor applied after our register changes.
@@ -65,6 +82,7 @@ hle_intercept :: proc(c: ^Console) -> bool {
 	case 0xB0: table_call(c, 0xB0)
 	case 0xC0: table_call(c, 0xC0)
 	case 0x80: exception_handler(c)
+	case HLE_HANDLER_RETURN: return_from_exception(c)
 	case: return false
 	}
 	return true
@@ -102,9 +120,7 @@ exception_handler :: proc(c: ^Console) {
 		rfe(cpu)
 		jump(cpu, cpu.epc + 4)
 	case .Interrupt:
-		h.saved = cpu.r
-		h.saved_hi, h.saved_lo = cpu.hi, cpu.lo
-		h.saved_epc = cpu.epc
+		save_thread(c)
 		if h.pad_on && c.i_stat & 1 != 0 {
 			// the BIOS pad handler: status, digital pad ID, then the buttons
 			for buf, i in h.pad_buf {
@@ -136,21 +152,47 @@ exception_handler :: proc(c: ^Console) {
 			return_from_exception(c)
 		}
 	case:
-		// Breaks and faults: skip the instruction rather than hang.
-		rfe(cpu)
-		jump(cpu, cpu.epc + 4)
+		// Breaks and faults go to the program's hook for unresolved
+		// exceptions (A0 table entry 0x40), which may edit the saved state.
+		// Without one, the instruction is skipped rather than hanging.
+		save_thread(c)
+		if hook := read32_phys(c, HLE_UNRESOLVED_HOOK); hook != 0 {
+			cpu.r[29] = HLE_KERNEL_STACK
+			cpu.r[31] = 0xA000_0000 | HLE_HANDLER_RETURN
+			jump(cpu, hook)
+		} else {
+			write32_phys(c, HLE_TCB + 0x88, cpu.epc + 4)
+			return_from_exception(c)
+		}
 	}
 }
 
+// Saves the registers to the thread control block, as the BIOS does on
+// every exception it does not handle itself.
+@(private = "file")
+save_thread :: proc(c: ^Console) {
+	cpu := &c.cpu
+	for r, i in cpu.r {
+		write32_phys(c, HLE_TCB + 8 + u32(i) * 4, r)
+	}
+	write32_phys(c, HLE_TCB + 0x88, cpu.epc)
+	write32_phys(c, HLE_TCB + 0x8C, cpu.hi)
+	write32_phys(c, HLE_TCB + 0x90, cpu.lo)
+	write32_phys(c, HLE_TCB + 0x94, cpu.sr)
+	write32_phys(c, HLE_TCB + 0x98, cpu.cause)
+}
+
+// ReturnFromException: resumes the thread as its control block now says.
 @(private = "file")
 return_from_exception :: proc(c: ^Console) {
 	cpu := &c.cpu
-	h := &c.hle
-	cpu.r = h.saved
-	cpu.r[0] = 0
-	cpu.hi, cpu.lo = h.saved_hi, h.saved_lo
+	for i in u32(1) ..< 32 {
+		cpu.r[i] = read32_phys(c, HLE_TCB + 8 + i * 4)
+	}
+	cpu.hi = read32_phys(c, HLE_TCB + 0x8C)
+	cpu.lo = read32_phys(c, HLE_TCB + 0x90)
 	rfe(cpu)
-	jump(cpu, h.saved_epc)
+	jump(cpu, read32_phys(c, HLE_TCB + 0x88))
 }
 
 @(private = "file")
@@ -167,6 +209,13 @@ read8_phys :: #force_inline proc(c: ^Console, addr: u32) -> u8 {
 @(private = "file")
 write8_phys :: #force_inline proc(c: ^Console, addr: u32, v: u8) {
 	c.ram[int(addr & 0x1F_FFFF) & (RAM_SIZE - 1)] = v
+}
+
+@(private = "file")
+write32_phys :: proc(c: ^Console, addr: u32, v: u32) {
+	for i in u32(0) ..< 4 {
+		write8_phys(c, addr + i, u8(v >> (i * 8)))
+	}
 }
 
 @(private = "file")

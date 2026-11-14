@@ -132,6 +132,7 @@ reset :: proc(c: ^Console) {
 		// No BIOS: start the program directly (homebrew / test programs),
 		// with exceptions going to the RAM vector the HLE BIOS serves.
 		c.cpu.sr &= ~u32(SR_BEV)
+		hle_setup_kernel(c)
 		exe_load(c)
 	}
 }
