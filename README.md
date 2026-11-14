@@ -8,9 +8,9 @@ is no GUI library, and the font is an original one made for this project.
 
 | System | Status |
 | --- | --- |
-| Nintendo Entertainment System | Complete. Mappers 0-5, 7, 9, 10, 11, 21-26 (Konami VRC2/4/6 with VRC6 audio), 34, 66, 69 (Sunsoft FME-7), 71, 79, 87, 140, 180, 206, 232. Passes `nestest` and the blargg CPU, APU, MMC3 and VBL suites listed in `nes_test.odin`. |
-| Super Nintendo | 65816, PPU modes 0–7 (mode 7, offset-per-tile, hi-res, windows, color math, mosaic), DMA/HDMA, SPC700 and DSP audio. LoROM/HiROM/ExHiROM with battery saves. Matches every reference screen of PeterLemon's SNES CPU suite. |
-| Game Boy / Color | SM83 CPU, PPU with full CGB support (VRAM banks, color palettes, HDMA, double speed), APU, MBC1/2/3 (with clock)/5, battery saves. Passes blargg's `cpu_instrs`, `instr_timing`, `mem_timing` and most of `dmg_sound`, and renders dmg-acid2 and cgb-acid2 correctly. |
+| Nintendo Entertainment System | Complete. Mappers 0-5, 7, 9, 10, 11, 21-26 (Konami VRC2/4/6 with VRC6 audio), 34, 66, 69 (Sunsoft FME-7), 71, 79, 87, 140, 180, 206, 232. Master-clock CPU/PPU alignment and a cycle-accurate DMA unit. Passes `nestest` and the blargg CPU, interrupt, reset, APU, PPU VBL/NMI, open-bus, OAM and MMC3 suites listed in `nes_test.odin`. |
+| Super Nintendo | 65816, PPU modes 0–7 (mode 7, offset-per-tile, hi-res, interlace, windows, color math, mosaic), DMA/HDMA, SPC700 and DSP audio. LoROM/HiROM/ExHiROM with battery saves, and Super FX (GSU) cartridges. Matches every reference screen of PeterLemon's SNES CPU suite and 55 of his Super FX tests. |
+| Game Boy / Color | SM83 CPU, PPU with full CGB support (VRAM banks, color palettes, HDMA, double speed), APU, MBC1/2/3 (with clock)/5, battery saves, the DMG OAM corruption bug. Passes blargg's `cpu_instrs`, `instr_timing`, `mem_timing(-2)`, `halt_bug`, `interrupt_time`, every `dmg_sound` and `cgb_sound` test and most of `oam_bug`, and renders dmg-acid2 and cgb-acid2 correctly. |
 | Game Boy Advance | ARM7TDMI (ARM and Thumb, with the prefetch pipeline), all six video modes with affine backgrounds and sprites, windows and blending, DMA, timers, Game Boy sound plus Direct Sound, SRAM/Flash/EEPROM saves, the cartridge clock (Pokémon, Boktai). The BIOS is emulated, so none is needed. Passes jsmolka's `gba-tests` and DenSinH's FuzzARM ROMs. |
 | Sega Master System / Game Gear | Z80 (passes ZEXDOC and ZEXALL, including undocumented flags), Mode 4 VDP with line interrupts, sprite zoom and collision, SN76489 sound with Game Gear stereo, Sega mapper with cartridge RAM. |
 | PlayStation | R3000A, GTE, software GPU, DMA, timers, CD-ROM (CUE/BIN/ISO, CD-DA, XA audio), SPU with reverb, pads, memory cards, MDEC video. Needs a BIOS for discs; homebrew `.exe` files also run without one. |
@@ -169,12 +169,15 @@ has headless options for debugging (`--frames`, `--dump-frame`,
 
 ## Known limitations
 
-* NES: a few dot-exact PPU timing tests (VBL/NMI edge races, open-bus decay) still fail.
-* SNES: no enhancement chips (Super FX, SA-1, DSP-1, …); such games are
-  refused at load. Interlaced 448/478-line modes show one field.
+* NES: blargg's `sprdma_and_dmc_dma` still fails; the MMC6 and older-MMC3
+  variant tests fail because those boards are not emulated.
+* SNES: of the enhancement chips only the Super FX is emulated; games that
+  need another (SA-1, DSP-1, Cx4, S-DD1, SPC7110, …) are refused at load.
+* Game Boy: `oam_bug/7-timing_effect` has not been confirmed (it runs too long
+  for the test harness).
 * Game Boy Advance: the official sound driver's BIOS calls (used by a few
-  games instead of their own mixer) are not emulated, wait states are
-  approximate, and DMA3 video capture is missing.
+  games instead of their own mixer) are not emulated, and the prefetch
+  buffer is modelled only roughly.
 * PlayStation: GPU polygon edges can differ by one pixel from hardware on
   some slopes.
 
