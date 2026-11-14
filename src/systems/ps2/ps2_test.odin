@@ -2,6 +2,8 @@ package ps2
 
 import "core:testing"
 
+import "../../emu"
+
 // testdata/build.sh compiles cpu.c for the EE with clang and natively for
 // the host; the emulated run must print exactly what the native one did.
 @(test)
@@ -102,5 +104,32 @@ fpu_is_not_ieee :: proc(t: ^testing.T) {
 	f.r[1] = 0x4F80_0000 // 2^32
 	exec(c, 0x11 << 26 | 0x10 << 21 | 0 << 16 | 1 << 11 | 3 << 6 | 0x24) // CVT.W.S
 	testing.expect_value(t, f.r[3], 0x7FFF_FFFF)
+}
+
+
+// testdata/gs.c draws through GIF DMA; check the pixels it should produce.
+@(test)
+gs_draws :: proc(t: ^testing.T) {
+	c, err := create_from_elf(#load("testdata/gs.elf"))
+	testing.expect_value(t, err, nil)
+	if c == nil {return}
+	defer destroy(c)
+	testing.expect(t, run_instructions(c, 20_000_000), "program did not finish")
+	testing.expect_value(t, debug_output(c), "OK\n")
+	gs_read_out(c)
+	f := frame(c)
+	testing.expect_value(t, f.width, 640)
+	testing.expect_value(t, f.height, 448)
+	px :: proc(f: emu.Frame, x, y: int) -> u32 {return f.pixels[y * f.pitch + x]}
+	testing.expect_value(t, px(f, 600, 400), 0x102040) // clear colour
+	r := px(f, 102, 52)
+	testing.expectf(t, r >> 16 > 0xE0 && r & 0xFFFF < 0x2020, "near the red corner: %06x", r)
+	gr := px(f, 296, 52)
+	testing.expectf(t, (gr >> 8) & 0xFF > 0xD0, "near the green corner: %06x", gr)
+	testing.expect_value(t, px(f, 401, 101), 0xFFFFFF)  // first checker cell
+	testing.expect_value(t, px(f, 417, 101), 0xFF00FF)  // second checker cell
+	testing.expect_value(t, px(f, 300, 200), 0x102040)  // outside the triangle
+	// 25% white over the clear colour: (255 - c) * 64 / 128 + c
+	testing.expect_value(t, px(f, 40, 320), u32(0x10 + (0xFF - 0x10) / 2) << 16 | u32(0x20 + (0xFF - 0x20) / 2) << 8 | u32(0x40 + (0xFF - 0x40) / 2))
 }
 
