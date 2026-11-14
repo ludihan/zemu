@@ -131,6 +131,7 @@ ppu_step :: proc(c: ^Console, cycles: int) -> bool {
 				render_line(c, int(p.vcount))
 				dma_trigger(c, DMA_HBLANK)
 			}
+			dma_video_capture(c, int(p.vcount))
 			if p.dispstat & 0x10 != 0 {
 				irq_raise(c, IRQ_HBLANK)
 			}
@@ -245,8 +246,24 @@ render_text_bg :: proc(c: ^Console, bg: int, y: int, out: ^Line) {
 	}
 }
 
+// Start of a rotated/scaled line, honouring vertical mosaic (the line
+// repeats the reference point of the first line in its mosaic block), and
+// the horizontal mosaic block width.
 @(private = "file")
-render_affine_bg :: proc(c: ^Console, bg: int, out: ^Line) {
+affine_start :: proc(p: ^Ppu, n: int, y: int, mosaic: bool) -> (rx, ry: i32, mw: int) {
+	rx, ry = p.internal[n][0], p.internal[n][1]
+	mw = 1
+	if mosaic {
+		mw = int(p.mosaic & 0xF) + 1
+		back := i32(y % (int((p.mosaic >> 4) & 0xF) + 1))
+		rx -= i32(p.affine[n][1]) * back
+		ry -= i32(p.affine[n][3]) * back
+	}
+	return
+}
+
+@(private = "file")
+render_affine_bg :: proc(c: ^Console, bg: int, y: int, out: ^Line) {
 	p := &c.ppu
 	cnt := p.bgcnt[bg]
 	n := bg - 2
@@ -256,13 +273,11 @@ render_affine_bg :: proc(c: ^Console, bg: int, out: ^Line) {
 	wrap := cnt & 0x2000 != 0
 	pa := i32(p.affine[n][0])
 	pc := i32(p.affine[n][2])
-	rx := p.internal[n][0]
-	ry := p.internal[n][1]
+	rx0, ry0, mw := affine_start(p, n, y, cnt & 0x40 != 0)
 	for x in 0 ..< SCREEN_W {
-		tx := int(rx >> 8)
-		ty := int(ry >> 8)
-		rx += pa
-		ry += pc
+		mx := i32(x - x % mw)
+		tx := int((rx0 + pa * mx) >> 8)
+		ty := int((ry0 + pc * mx) >> 8)
 		if wrap {
 			tx &= size - 1
 			ty &= size - 1
@@ -277,22 +292,20 @@ render_affine_bg :: proc(c: ^Console, bg: int, out: ^Line) {
 }
 
 @(private = "file")
-render_bitmap_bg :: proc(c: ^Console, mode: int, out: ^Line) {
+render_bitmap_bg :: proc(c: ^Console, mode: int, y: int, out: ^Line) {
 	p := &c.ppu
 	pa := i32(p.affine[0][0])
 	pc := i32(p.affine[0][2])
-	rx := p.internal[0][0]
-	ry := p.internal[0][1]
+	rx0, ry0, mw := affine_start(p, 0, y, p.bgcnt[2] & 0x40 != 0)
 	w, h := SCREEN_W, SCREEN_H
 	if mode == 5 {
 		w, h = 160, 128
 	}
 	page := p.dispcnt & 0x10 != 0 && mode != 3 ? 0xA000 : 0
 	for x in 0 ..< SCREEN_W {
-		tx := int(rx >> 8)
-		ty := int(ry >> 8)
-		rx += pa
-		ry += pc
+		mx := i32(x - x % mw)
+		tx := int((rx0 + pa * mx) >> 8)
+		ty := int((ry0 + pc * mx) >> 8)
 		if tx < 0 || ty < 0 || tx >= w || ty >= h {
 			out[x] = TRANSPARENT
 			continue
@@ -376,15 +389,18 @@ render_objects :: proc(c: ^Console, y: int, out: ^Obj_Line) {
 			pd = i32(i16(oam16(c, base + 30)))
 		}
 		dy := y - oy
+		mw := 1
 		if a0 & 0x1000 != 0 { // mosaic
 			mh := int((p.mosaic >> 12) & 0xF) + 1
 			dy -= dy % mh
+			mw = int((p.mosaic >> 8) & 0xF) + 1
 		}
-		for bx in 0 ..< bw {
-			x := ox + bx
+		for col in 0 ..< bw {
+			x := ox + col
 			if x < 0 || x >= SCREEN_W {
 				continue
 			}
+			bx := col - col % mw // horizontal mosaic repeats the block's first texel
 			tx, ty: int
 			if affine {
 				cx := i32(bx - bw / 2)
@@ -514,17 +530,17 @@ render_line :: proc(c: ^Console, y: int) {
 				render_text_bg(c, bg, y, &bgs[bg])
 			} else if bg == 2 {
 				enabled[bg] = true
-				render_affine_bg(c, bg, &bgs[bg])
+				render_affine_bg(c, bg, y, &bgs[bg])
 			}
 		case 2:
 			if bg >= 2 {
 				enabled[bg] = true
-				render_affine_bg(c, bg, &bgs[bg])
+				render_affine_bg(c, bg, y, &bgs[bg])
 			}
 		case 3, 4, 5:
 			if bg == 2 {
 				enabled[bg] = true
-				render_bitmap_bg(c, mode, &bgs[bg])
+				render_bitmap_bg(c, mode, y, &bgs[bg])
 			}
 		}
 	}
