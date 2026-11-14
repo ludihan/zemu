@@ -236,6 +236,11 @@ open_bus :: proc(c: ^Console) -> u32 {
 
 rom_read16 :: proc(c: ^Console, address: u32) -> u16 {
 	addr := address & ~u32(1)
+	if addr >> 8 == 0x0800_00 {
+		if v, ok := rtc_read(&c.rtc, addr); ok {
+			return v
+		}
+	}
 	if c.save.kind == .Eeprom && addr >> 24 == 0x0D && (len(c.rom) <= 0x100_0000 || addr >= 0x0DFF_FF00) {
 		return eeprom_read(&c.save)
 	}
@@ -291,6 +296,8 @@ write16 :: proc(c: ^Console, address: u32, v: u16) {
 	case 0x08 ..= 0x0D:
 		if c.save.kind == .Eeprom && addr >> 24 == 0x0D {
 			eeprom_write(&c.save, v)
+		} else if addr >> 8 == 0x0800_00 {
+			rtc_write(&c.rtc, addr, v)
 		}
 	case 0x0E, 0x0F:
 		save_write8(c, address, u8(v >> ((address & 1) * 8)))
@@ -312,6 +319,9 @@ write32 :: proc(c: ^Console, address: u32, v: u32) {
 	case 0x08 ..= 0x0D:
 		if c.save.kind == .Eeprom && addr >> 24 == 0x0D {
 			eeprom_write(&c.save, u16(v))
+		} else if addr >> 8 == 0x0800_00 {
+			rtc_write(&c.rtc, addr, u16(v))
+			rtc_write(&c.rtc, addr + 2, u16(v >> 16))
 		}
 	case 0x0E, 0x0F:
 		save_write8(c, address, u8(v >> ((address & 3) * 8)))

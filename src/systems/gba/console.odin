@@ -12,6 +12,7 @@ Console :: struct {
 	ppu:          Ppu,
 	sound:        Sound,
 	save:         Save,
+	rtc:          Rtc,
 	timers:       [4]Timer,
 	dma:          [4]Dma,
 	bios:         [BIOS_SIZE]u8,
@@ -64,6 +65,7 @@ create :: proc(rom: []u8, allocator := context.allocator) -> (^Console, emu.Load
 	copy(c.rom, rom)
 	c.fingerprint = emu.fingerprint(rom)
 	save_detect(&c.save, c.rom)
+	rtc_detect(&c.rtc, c.rom)
 	reset(c)
 	return c, .None
 }
