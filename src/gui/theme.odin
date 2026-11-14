@@ -37,8 +37,8 @@ THEMES := [?]Theme {
 		// The default: periwinkle windows, a darker title strip, white text
 		// with hard black shadows, in the manner of ZSNES's stock colors.
 		name                  = "ZSNES",
-		desktop_top           = {0, 0, 0, 255},
-		desktop_bottom        = {0, 0, 0, 255},
+		desktop_top           = {8, 12, 56, 255},
+		desktop_bottom        = {0, 0, 16, 255},
 		window_top            = {92, 104, 196, 255},
 		window_bottom         = {44, 52, 140, 255},
 		title_top             = {48, 56, 148, 255},
