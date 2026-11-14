@@ -96,6 +96,7 @@ System_Kind :: enum u8 {
 	GB,
 	SMS,
 	GG,
+	GBA,
 }
 
 System_Info :: struct {
@@ -158,6 +159,14 @@ SYSTEM_INFO := [System_Kind]System_Info {
 		fps         = 59.9227,
 		sample_rate = 48000,
 		aspect      = 4.0 / 3.0,
+	},
+	.GBA = {
+		name        = "Game Boy Advance",
+		short_name  = "GBA",
+		extensions  = {".gba", ".agb"},
+		fps         = 59.7275,
+		sample_rate = 48000,
+		aspect      = 3.0 / 2.0,
 	},
 }
 
