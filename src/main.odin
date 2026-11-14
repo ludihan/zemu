@@ -28,7 +28,8 @@ Options :: struct {
 
 USAGE :: `usage: zemu [rom] [options]
 
-  rom                 .nes .sfc .smc .gb .gbc (Nintendo) or .cue .bin .iso .exe (PlayStation)
+  rom                 .nes .sfc .smc .gb .gbc (Nintendo), .sms .gg (Sega),
+                      .cue .bin .iso .exe (PlayStation)
   --ui-scale N        interface scale, 1-8
   --frames N          run N frames as fast as possible, then exit
   --screenshot FILE   with --frames: write the final window to FILE (BMP)

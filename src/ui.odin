@@ -398,7 +398,7 @@ draw_about_window :: proc(app: ^App) {
 	ctx := &app.ui
 	gui.label(ctx, 0, 0, "ZEMU " + APP_VERSION, ctx.theme.text_hot)
 	gui.label(ctx, 0, 12, "A multi-system emulator written in Odin.")
-	gui.label_dim(ctx, 0, 26, "Systems: NES, SNES, Game Boy, PlayStation")
+	gui.label_dim(ctx, 0, 26, "NES, SNES, GB, Master System, Game Gear, PSX")
 	gui.label_dim(ctx, 0, 36, "Licensed under the GNU AGPL v3.")
 	gui.label(ctx, 0, 52, "Esc    menu / back to game")
 	gui.label(ctx, 0, 62, "Tab    fast forward (hold)")
@@ -453,7 +453,7 @@ ui_draw_splash :: proc(app: ^App) {
 	gui.text_scaled(ctx, x, y, logo, big, t.title_top)
 	gui.text_scaled(ctx, x, y, logo, big, {t.text.r, t.text.g, t.text.b, 120})
 
-	lines := [?]string{"MULTI-SYSTEM EMULATOR", "", "NES  -  SNES  -  GAME BOY  -  PLAYSTATION", "", "GAME > LOAD (Ctrl+O) or drop a file here"}
+	lines := [?]string{"MULTI-SYSTEM EMULATOR", "", "NES - SNES - GAME BOY - MASTER SYSTEM - GAME GEAR - PLAYSTATION", "", "GAME > LOAD (Ctrl+O) or drop a file here"}
 	ly := y + gui.CELL_H * big + 10
 	for l, i in lines {
 		lw := gui.text_width(l)
@@ -557,6 +557,7 @@ draw_cheats_window :: proc(app: ^App) {
 		case .SNES: hint = "Game Genie (XXXX-XXXX) or Action Replay"
 		case .GB:   hint = "Game Genie (ABC-DEF-GHI) or GameShark"
 		case .PSX:  hint = "GameShark (80XXXXXX YYYY / 30XXXXXX 00YY)"
+		case .SMS, .GG: hint = "Action Replay (00AAAAVV) or ADDR:VAL"
 		}
 		gui.label_dim(ctx, 0, y, hint)
 	}

@@ -8,6 +8,7 @@ import "emu"
 import "systems/gb"
 import "systems/nes"
 import "systems/psx"
+import "systems/sms"
 import "systems/snes"
 
 // Cheat codes. Game Genie codes patch cartridge ROM reads; Pro Action
@@ -185,6 +186,12 @@ decode_cheat :: proc(kind: emu.System_Kind, code: string) -> (c: Cheat, ok: bool
 			return {kind = .Ram_Write8, addr = addr, value = u16((v >> 16) & 0xFF), compare = -1}, true
 		}
 		return decode_gb_genie(s)
+	case .SMS, .GG:
+		// Pro Action Replay: 00AAAAVV writes RAM every frame
+		if len(s) == 8 {
+			v := hex_value(s) or_return
+			return {kind = .Ram_Write8, addr = (v >> 8) & 0xFFFF, value = u16(v & 0xFF), compare = -1}, true
+		}
 	case .PSX:
 		if len(s) == 12 {
 			op := s[0:2]
@@ -236,6 +243,7 @@ cheats_sync :: proc(m: Machine, list: ^Cheat_List) {
 	case ^nes.Console:  patches = &c.patches
 	case ^snes.Console: patches = &c.patches
 	case ^gb.Console:   patches = &c.patches
+	case ^sms.Console:  patches = &c.patches
 	case ^psx.Console:
 	}
 	if patches == nil {
@@ -261,6 +269,7 @@ cheats_apply :: proc(m: Machine, list: ^Cheat_List) {
 		case ^nes.Console:  nes.poke(c, ch.addr, u8(ch.value))
 		case ^snes.Console: snes.poke(c, ch.addr, u8(ch.value))
 		case ^gb.Console:   gb.poke(c, ch.addr, u8(ch.value))
+		case ^sms.Console:  sms.poke(c, ch.addr, u8(ch.value))
 		case ^psx.Console:
 			if ch.kind == .Ram_Write16 {
 				psx.poke16(c, ch.addr, ch.value)
