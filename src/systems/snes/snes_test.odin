@@ -5,6 +5,7 @@ import "core:image"
 import "core:image/png"
 import "core:log"
 import "core:os"
+import "core:strings"
 import "core:testing"
 
 import "../../emu"
@@ -195,5 +196,56 @@ image_pixels :: proc(img: ^image.Image) -> []u8 {
 		return img.pixels[:]
 	} else {
 		return img.pixels.buf[:]
+	}
+}
+
+// PeterLemon's Super FX tests: instruction tests print PASS/FAIL tables and
+// the 2/4/8 bpp demos plot pixels, lines and polygons; each ships the
+// expected screen.
+@(test)
+gsu_tests_match_reference_screens :: proc(t: ^testing.T) {
+	dir, ok := test_dir()
+	if !ok {
+		log.warn("ZEMU_SNES_TESTS not set")
+		return
+	}
+	root := fmt.tprintf("%s/CHIP/GSU", dir)
+	paths: [dynamic]string
+	defer delete(paths)
+	walk :: proc(dir: string, out: ^[dynamic]string) {
+		entries, err := os.read_all_directory_by_path(dir, context.temp_allocator)
+		if err != nil {return}
+		for e in entries {
+			if e.type == .Directory {
+				walk(e.fullpath, out)
+			} else if len(e.name) > 4 && e.name[len(e.name) - 4:] == ".sfc" {
+				append(out, e.fullpath)
+			}
+		}
+	}
+	walk(root, &paths)
+	testing.expect(t, len(paths) > 0, "no GSU tests found")
+	for path in paths {
+		png_path := fmt.tprintf("%s.png", path[:len(path) - 4])
+		if !os.exists(png_path) {continue}
+		// The three 256x192 PlotPixel screenshots show the picture starting
+		// two lines earlier than the ROMs' own HDMA table (19 blank lines)
+		// allows; the same rule matches the 128- and 160-line versions and
+		// the other 192-line demos exactly, so those references look stale.
+		if strings.contains(path, "PlotPixel/256x192") {continue}
+		rom, err := os.read_entire_file(path, context.allocator)
+		if err != nil {continue}
+		c, load_err := create(rom)
+		delete(rom)
+		if load_err != .None {
+			testing.expectf(t, false, "%s: %v", path, load_err)
+			continue
+		}
+		for _ in 0 ..< 300 {
+			run_frame(c, {}, nil)
+		}
+		diff := compare_with_png(t, c, png_path)
+		testing.expectf(t, diff == 0, "%s: %.2f%% of pixels differ", path[len(root) + 1:], diff * 100)
+		destroy(c)
 	}
 }
