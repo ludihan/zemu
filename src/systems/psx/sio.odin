@@ -76,7 +76,6 @@ format_card :: proc(card: ^Memory_Card) {
 	copy(card.data[63 * 128:], card.data[0:128]) // write test frame
 }
 
-@(private = "file")
 pad_bytes :: proc(b: emu.Buttons) -> (lo, hi: u8) {
 	lo, hi = 0xFF, 0xFF
 	if .Select in b {lo &= ~u8(0x01)}

@@ -17,6 +17,8 @@ Hle_Bios :: struct {
 	saved_epc:   u32,
 	next_event:  u32,
 	clear_pad:   bool,
+	pad_buf:     [2]u32, // InitPAD buffers, filled at each VBlank once started
+	pad_on:      bool,
 	clear_rcnt:  bool,
 	tty:         [8192]u8,
 	tty_len:     int,
@@ -103,6 +105,17 @@ exception_handler :: proc(c: ^Console) {
 		h.saved = cpu.r
 		h.saved_hi, h.saved_lo = cpu.hi, cpu.lo
 		h.saved_epc = cpu.epc
+		if h.pad_on && c.i_stat & 1 != 0 {
+			// the BIOS pad handler: status, digital pad ID, then the buttons
+			for buf, i in h.pad_buf {
+				if buf == 0 {continue}
+				lo, hi := pad_bytes(c.pads[i])
+				write8_phys(c, buf, 0x00)
+				write8_phys(c, buf + 1, 0x41)
+				write8_phys(c, buf + 2, lo)
+				write8_phys(c, buf + 3, hi)
+			}
+		}
 		if h.clear_rcnt {
 			c.i_stat &= ~u32(0x70) // the default handler acknowledges the timers
 		}
@@ -294,7 +307,11 @@ table_call :: proc(c: ^Console, table: u32) {
 			v0 = 0xF100_0000 | h.next_event
 		case 0x09, 0x0A, 0x0C, 0x0D: v0 = 1 // CloseEvent, WaitEvent, EnableEvent, DisableEvent
 		case 0x0B: v0 = 0 // TestEvent: nothing has happened
-		case 0x12, 0x13, 0x14: v0 = 1 // InitPAD, StartPAD, StopPAD
+		case 0x12: // InitPAD(buf1, size1, buf2, size2)
+			h.pad_buf = {a0, a2}
+			v0 = 1
+		case 0x13: h.pad_on = true; v0 = 1 // StartPAD
+		case 0x14: h.pad_on = false; v0 = 1 // StopPAD
 		case 0x17: return_from_exception(c); return
 		case 0x18: h.custom_exit = 0 // ResetEntryInt
 		case 0x19: h.custom_exit = a0 // HookEntryInt / SetCustomExitFromException
