@@ -143,3 +143,18 @@ program_runs_interrupts_and_sound :: proc(t: ^testing.T) {
 	testing.expectf(t, frames >= 9 && frames <= 10, "counted %d frame interrupts in 10 frames", frames)
 	testing.expectf(t, loud > 1000, "expected an audible tone, got %d loud samples", loud)
 }
+
+// The H counter counts pixel pairs and skips $94-$E8 during HBlank.
+@(test)
+h_counter_jumps :: proc(t: ^testing.T) {
+	c := setup(t, false)
+	defer destroy(c)
+	c.line_cycles = 0
+	testing.expect_value(t, port_in(c, 0x7F), 0x00)
+	c.line_cycles = 196 // pixel 294 -> pair 147 = $93
+	testing.expect_value(t, port_in(c, 0x7F), 0x93)
+	c.line_cycles = 198 // pixel 297 -> pair 148 jumps to $E9
+	testing.expect_value(t, port_in(c, 0x7F), 0xE9)
+	c.line_cycles = LINE_CYCLES - 1 // last pair of the line
+	testing.expect_value(t, port_in(c, 0x7F), 0xFF)
+}

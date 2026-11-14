@@ -229,13 +229,26 @@ port_in :: proc(user: rawptr, port: u16) -> u8 {
 	}
 	switch p & 0xC1 {
 	case 0x40: return vdp_v_counter(&c.vdp)
-	case 0x41: return u8(c.line_cycles * 171 / LINE_CYCLES) // approximate H counter
+	case 0x41: return h_counter(c)
 	case 0x80: return vdp_read_data(&c.vdp)
 	case 0x81: return vdp_read_status(&c.vdp)
 	case 0xC0: return pad_port_a(c)
 	case 0xC1: return pad_port_b(c)
 	}
 	return 0xFF
+}
+
+// The VDP's horizontal counter: 342 pixels per line (1.5 per CPU cycle),
+// counted in pairs, with the count jumping from $93 to $E9 during the
+// horizontal blank so it reads $00-$93 then $E9-$FF.
+@(private = "file")
+h_counter :: proc(c: ^Console) -> u8 {
+	pixel := c.line_cycles * 342 / LINE_CYCLES
+	hc := pixel >> 1
+	if hc > 0x93 {
+		hc += 0xE9 - 0x94
+	}
+	return u8(hc)
 }
 
 port_out :: proc(user: rawptr, port: u16, v: u8) {
