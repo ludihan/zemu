@@ -51,6 +51,7 @@ back. You can also drag a file onto the window to load it.
 | --- | --- |
 | Esc | menu / back to game / close window |
 | Tab (hold) | fast forward |
+| Backspace (hold) | rewind |
 | P | pause |
 | F2 / F4 | save / load state |
 | F3 | next save state slot (0-9) |

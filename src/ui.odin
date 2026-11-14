@@ -11,7 +11,7 @@ ui_init_windows :: proc(app: ^App) {
 	ctx := &app.ui
 	app.win_load    = {title = "LOAD GAME", rect = {20, 22, 330, 214}}
 	app.win_input   = {title = "INPUT CONFIG", rect = {40, 30, 300, 178}}
-	app.win_video   = {title = "VIDEO", rect = {60, 40, 236, 148}}
+	app.win_video   = {title = "VIDEO", rect = {60, 40, 236, 161}}
 	app.win_ui      = {title = "INTERFACE", rect = {70, 50, 220, 108}}
 	app.win_sound   = {title = "SOUND", rect = {80, 60, 200, 84}}
 	app.win_paths   = {title = "PATHS", rect = {50, 70, 300, 110}}
@@ -332,6 +332,10 @@ draw_video_window :: proc(app: ^App) {
 	}
 	y += 13
 	gui.checkbox(ctx, 0, y, "Show FPS", &cfg.show_fps)
+	y += 13
+	if gui.checkbox(ctx, 0, y, "Rewind (hold Backspace)", &cfg.rewind) && !cfg.rewind {
+		rewind_reset(&app.rewind)
+	}
 	y += 15
 	gui.label_dim(ctx, 0, y, "Games are always letterboxed, never")
 	gui.label_dim(ctx, 0, y + 10, "stretched to fill the window.")
@@ -400,7 +404,7 @@ draw_about_window :: proc(app: ^App) {
 	gui.label(ctx, 0, 62, "Tab    fast forward (hold)")
 	gui.label(ctx, 0, 72, "P      pause      F12 screenshot")
 	gui.label(ctx, 0, 82, "F2/F4  save/load state  F3 slot")
-	gui.label(ctx, 0, 92, "Alt+Enter fullscreen")
+	gui.label(ctx, 0, 92, "Backspace rewind  Alt+Enter fullscreen")
 	if gui.button(ctx, {app.win_about.rect.w - 8 - 50, 104, 50, 14}, "OK") {
 		app.win_about.open = false
 	}
@@ -471,6 +475,12 @@ ui_draw_overlay :: proc(app: ^App) {
 		x := ctx.size.x - gui.text_width(s) - 4
 		gui.text(ctx, x + 1, 5, s, {0, 0, 0, 255})
 		gui.text(ctx, x, 4, s, {255, 255, 80, 255})
+	}
+	if app.rewinding && !app.menu_active {
+		s := "<< REWIND"
+		x := (ctx.size.x - gui.text_width(s)) / 2
+		gui.text(ctx, x + 1, 5, s, {0, 0, 0, 255})
+		gui.text(ctx, x, 4, s, t.text_hot)
 	}
 	if app.paused && !app.menu_active {
 		s := "PAUSED"

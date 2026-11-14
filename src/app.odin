@@ -46,6 +46,8 @@ App :: struct {
 	menu_active: bool,
 	paused:      bool,
 	fast_forward: bool,
+	rewinding:   bool,
+	rewind:      Rewind,
 	time:        f64,
 	frame_acc:   f64,
 	last_ticks:  u64,
@@ -220,6 +222,7 @@ app_close_game :: proc(app: ^App) {
 	write_save_ram(app)
 	cheats_save(&app.cheats, cheat_path(app))
 	app.cheats = {}
+	rewind_reset(&app.rewind)
 	machine_destroy(&app.machine)
 	delete(app.rom_path)
 	app.rom_path = ""
@@ -283,6 +286,9 @@ app_load_game :: proc(app: ^App, path: string) -> bool {
 
 	cheats_load(&app.cheats, kind, cheat_path(app))
 	cheats_sync(app.machine, &app.cheats)
+	rewind_reset(&app.rewind)
+	// PlayStation states are large; snapshot them less often.
+	app.rewind.interval = kind == .PSX ? 4 : 2
 
 	info := emu.SYSTEM_INFO[kind]
 	if !audio_open(&app.audio, info.sample_rate) {
@@ -470,12 +476,17 @@ app_handle_events :: proc(app: ^App) {
 			if e.key.scancode == .TAB && !app.menu_active {
 				app.fast_forward = true
 			}
+			if e.key.scancode == .BACKSPACE && !app.menu_active && app.cfg.rewind {
+				app.rewinding = true
+			}
 		case .KEY_UP:
-			if e.key.scancode == .TAB {
-				app.fast_forward = false
+			#partial switch e.key.scancode {
+			case .TAB:       app.fast_forward = false
+			case .BACKSPACE: app.rewinding = false
 			}
 		case .WINDOW_FOCUS_LOST:
 			app.fast_forward = false
+			app.rewinding = false
 		case .DROP_FILE:
 			if e.drop.data != nil {
 				app_load_game(app, strings.clone_from_cstring(e.drop.data, context.temp_allocator))
@@ -511,10 +522,27 @@ app_emulate :: proc(app: ^App, dt: f64) {
 		}
 	}
 
+	if app.rewinding {
+		// Step back one snapshot per frame period (with snapshots every few
+		// frames this plays history backwards a little faster than real time).
+		for _ in 0 ..< frames {
+			if !rewind_step(&app.rewind, app.machine) {
+				break
+			}
+		}
+		emu.audio_clear(&app.audio.buffer)
+		if frames > 0 {
+			video_upload(&app.video, app.renderer, machine_frame(app.machine, &app.cfg), app.cfg.smooth)
+		}
+		return
+	}
 	for _ in 0 ..< frames {
 		cheats_apply(app.machine, &app.cheats)
 		machine_run_frame(app.machine, input, &app.audio.buffer)
 		audio_submit(&app.audio, app.cfg.audio, app.cfg.volume, app.fast_forward)
+		if app.cfg.rewind {
+			rewind_capture(&app.rewind, app.machine)
+		}
 		app.fps_frames += 1
 	}
 	if frames > 0 {

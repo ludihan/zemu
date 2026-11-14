@@ -36,6 +36,7 @@ Config :: struct {
 	vsync:         bool,
 	fullscreen:    bool,
 	show_fps:      bool,
+	rewind:        bool,
 	audio:         bool,
 	volume:        int,
 	rom_dir:       string,
@@ -106,6 +107,7 @@ config_defaults :: proc() -> Config {
 		crop_overscan = true,
 		vsync         = true,
 		audio         = true,
+		rewind        = true,
 		volume        = 80,
 		keys          = {DEFAULT_KEYS_P1, DEFAULT_KEYS_P2},
 	}
@@ -188,6 +190,7 @@ config_load :: proc(c: ^Config, path: string) {
 		case "vsync":         c.vsync = parse_bool(value)
 		case "fullscreen":    c.fullscreen = parse_bool(value)
 		case "show_fps":      c.show_fps = parse_bool(value)
+		case "rewind":        c.rewind = parse_bool(value)
 		case "audio":         c.audio = parse_bool(value)
 		case "volume":        c.volume = clamp(parse_int(value, 80), 0, 100)
 		case "rom_dir":       set_string(&c.rom_dir, value)
@@ -233,6 +236,7 @@ config_save :: proc(c: ^Config, path: string) -> bool {
 	fmt.sbprintfln(&b, "vsync = %v", c.vsync)
 	fmt.sbprintfln(&b, "fullscreen = %v", c.fullscreen)
 	fmt.sbprintfln(&b, "show_fps = %v", c.show_fps)
+	fmt.sbprintfln(&b, "rewind = %v", c.rewind)
 	fmt.sbprintfln(&b, "audio = %v", c.audio)
 	fmt.sbprintfln(&b, "volume = %d", c.volume)
 	fmt.sbprintfln(&b, "rom_dir = %s", c.rom_dir)
