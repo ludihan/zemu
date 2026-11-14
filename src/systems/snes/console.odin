@@ -56,6 +56,7 @@ Console :: struct {
 	audio:      ^emu.Audio_Buffer,
 	fingerprint: u64, // hash of the ROM image, ties save states to the game
 	pal:        bool,
+	patches:    emu.Patch_List, // Game Genie
 }
 
 // `pal` forces PAL timing; otherwise the header's destination code decides.
@@ -372,6 +373,9 @@ bus_read :: proc(c: ^Console, addr: u32) -> u8 {
 	case:
 		if cv, ok := cart_read(&c.cart, bank, a); ok {
 			v = cv
+			if c.patches.count > 0 {
+				v = emu.patch_apply(&c.patches, addr & 0xFFFFFF, v)
+			}
 		}
 	}
 	c.open_bus = v
@@ -509,4 +513,18 @@ load_state :: proc(c: ^Console, data: []u8) -> bool {
 	c.cart.rom, c.cart.sram, c.audio, c.fingerprint = rom, sram, audio, fp
 	c.spc.dsp.ram = &c.spc.ram // interior pointer must point at this console
 	return true
+}
+
+// Writes a byte for RAM cheat codes (Pro Action Replay).
+poke :: proc(c: ^Console, addr: u32, v: u8) {
+	bank := u8(addr >> 16)
+	a := u16(addr)
+	switch {
+	case bank == 0x7E || bank == 0x7F:
+		c.wram[(u32(bank & 1) << 16) | u32(a)] = v
+	case bank & 0x40 == 0 && a < 0x2000:
+		c.wram[a] = v
+	case:
+		cart_write(&c.cart, bank, a, v) // SRAM
+	}
 }

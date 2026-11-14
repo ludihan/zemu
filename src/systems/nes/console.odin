@@ -20,6 +20,7 @@ Console :: struct {
 	audio:     ^emu.Audio_Buffer, // only set while `run_frame` is running
 	fingerprint: u64, // hash of the ROM image, ties save states to the game
 	pal:       bool,
+	patches:   emu.Patch_List, // Game Genie
 	dot_frac:  u8, // PAL runs 3.2 PPU dots per CPU cycle: one extra every 5
 }
 
@@ -170,6 +171,9 @@ bus_read :: proc(c: ^Console, addr: u16) -> u8 {
 		v = (c.open_bus & 0xE0) | bit
 	case 0x4020 ..= 0xFFFF:
 		v = cart_cpu_read(&c.cart, addr, c.open_bus)
+		if c.patches.count > 0 && addr >= 0x8000 {
+			v = emu.patch_apply(&c.patches, u32(addr), v)
+		}
 	}
 	c.open_bus = v
 	return v
@@ -262,4 +266,12 @@ load_state :: proc(c: ^Console, data: []u8) -> bool {
 @(private = "file")
 chr_ram :: proc(c: ^Console) -> []u8 {
 	return c.cart.chr_is_ram ? c.cart.chr : nil
+}
+
+// Writes a byte for RAM cheat codes (no side effects beyond the write).
+poke :: proc(c: ^Console, addr: u32, v: u8) {
+	switch addr {
+	case 0x0000 ..= 0x1FFF: c.ram[addr & 0x7FF] = v
+	case 0x6000 ..= 0x7FFF: c.cart.prg_ram[addr & 0x1FFF] = v
+	}
 }

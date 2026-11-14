@@ -41,6 +41,7 @@ Console :: struct {
 
 	audio:        ^emu.Audio_Buffer,
 	fingerprint:  u64,
+	patches:      emu.Patch_List, // Game Genie
 }
 
 create :: proc(rom: []u8, allocator := context.allocator) -> (^Console, emu.Load_Error) {
@@ -203,7 +204,13 @@ wram_bank :: #force_inline proc(c: ^Console) -> int {
 
 bus_read :: proc(c: ^Console, addr: u16) -> u8 {
 	switch addr {
-	case 0x0000 ..= 0x7FFF, 0xA000 ..= 0xBFFF:
+	case 0x0000 ..= 0x7FFF:
+		v := cart_read(&c.cart, addr)
+		if c.patches.count > 0 {
+			v = emu.patch_apply(&c.patches, u32(addr), v)
+		}
+		return v
+	case 0xA000 ..= 0xBFFF:
 		return cart_read(&c.cart, addr)
 	case 0x8000 ..= 0x9FFF:
 		return c.ppu.vram[c.cgb ? int(c.ppu.vbk & 1) : 0][addr - 0x8000]
@@ -418,4 +425,12 @@ load_state :: proc(c: ^Console, data: []u8) -> bool {
 	emu.state_read(data, c, size_of(Console), {c.cart.ram})
 	c.cart.rom, c.cart.ram, c.audio, c.fingerprint = rom, ram, audio, fp
 	return true
+}
+
+// Writes a byte for RAM cheat codes (GameShark).
+poke :: proc(c: ^Console, addr: u32, v: u8) {
+	a := u16(addr)
+	if a >= 0x8000 {
+		bus_write(c, a, v)
+	}
 }

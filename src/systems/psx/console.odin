@@ -444,3 +444,14 @@ load_state :: proc(c: ^Console, data: []u8) -> bool {
 	c.mdec.out_pos = 0
 	return true
 }
+
+// Writes RAM for GameShark codes.
+poke8 :: proc(c: ^Console, addr: u32, v: u8) {
+	c.ram[addr & (RAM_SIZE - 1)] = v
+}
+
+poke16 :: proc(c: ^Console, addr: u32, v: u16) {
+	a := addr & (RAM_SIZE - 2)
+	c.ram[a] = u8(v)
+	c.ram[a + 1] = u8(v >> 8)
+}
