@@ -307,3 +307,25 @@ ps1_tests_assertions_pass :: proc(t: ^testing.T) {
 		destroy(c)
 	}
 }
+
+@(test)
+spu_volume_sweep_ramps :: proc(t: ^testing.T) {
+	c := new(Console)
+	defer free(c)
+	spu_reset(&c.spu)
+	// linear increase at the fastest rate: +0x3800 per sample, up to 0x7FFF
+	spu_write(c, 0x1F80_1C00, 0x8000)
+	spu_write(c, 0x1F80_1C02, 0x3000) // fixed volume first...
+	testing.expect_value(t, spu_read(&c.spu, 0x1F80_1E02), 0x6000)
+	spu_write(c, 0x1F80_1C02, 0x8000 | 0x2000 | 0x1000 | 0x64) // ...then sweep it down
+	want_l := []u16{0x3800, 0x7000, 0x7FFF, 0x7FFF}
+	for w in want_l {
+		spu_sample(c)
+		testing.expect_value(t, spu_read(&c.spu, 0x1F80_1E00), w)
+	}
+	// rate 0x64: shift 25, cycles 1 << 14, step -8 per update; phase makes it negative
+	for _ in 0 ..< 1 << 14 {
+		spu_sample(c)
+	}
+	testing.expect_value(t, spu_read(&c.spu, 0x1F80_1E02), transmute(u16)i16(-(0x6000 - 8)))
+}

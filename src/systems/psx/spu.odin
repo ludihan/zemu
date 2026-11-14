@@ -18,7 +18,7 @@ Adsr_Phase :: enum u8 {
 }
 
 Spu_Voice :: struct {
-	vol_l, vol_r: i16,
+	vol_l, vol_r: Volume,
 	pitch:       u16,
 	start:       u32, // byte address
 	repeat:      u32,
@@ -41,7 +41,7 @@ Spu :: struct {
 	ram:        [SPU_RAM_SIZE]u8,
 	regs:       [512]u16, // raw register file for read-back
 	voices:     [VOICES]Spu_Voice,
-	main_l, main_r: i16,
+	main_l, main_r: Volume,
 	cd_vol_l, cd_vol_r: i16,
 	control:    u16,
 	status:     u16,
@@ -80,8 +80,8 @@ build_gauss :: proc "contextless" () {
 spu_reset :: proc(s: ^Spu) {
 	s.regs = {}
 	s.voices = {}
-	s.main_l = 0
-	s.main_r = 0
+	s.main_l = {}
+	s.main_r = {}
 	s.control = 0
 	s.status = 0
 	s.endx = 0
@@ -90,12 +90,50 @@ spu_reset :: proc(s: ^Spu) {
 	s.noise_level = 1
 }
 
+// A volume register: either a fixed level, or (bit 15) a sweep that ramps
+// the level every sample with the same rate rules as the ADSR envelope:
+// bit 14 exponential, bit 13 decrease, bit 12 negative phase, bits 6-0 rate.
+Volume :: struct {
+	reg:   u16,
+	level: i32, // magnitude, 0..0x7FFF
+	count: int,
+}
+
 @(private = "file")
-volume :: #force_inline proc(v: u16) -> i16 {
-	if v & 0x8000 != 0 {
-		return 0x7FFF // sweep mode: approximated as full volume
+volume_set :: proc(v: ^Volume, reg: u16) {
+	v.reg = reg
+	v.count = 0
+	if reg & 0x8000 == 0 {
+		v.level = i32(i16(reg << 1))
 	}
-	return i16(v << 1)
+}
+
+@(private = "file")
+volume_tick :: proc(v: ^Volume) {
+	if v.reg & 0x8000 == 0 {
+		return
+	}
+	rate := i32(v.reg & 0x7F)
+	decrease := v.reg & 0x2000 != 0
+	exponential := v.reg & 0x4000 != 0
+	shift := rate >> 2
+	step := decrease ? -8 + (rate & 3) : 7 - (rate & 3)
+	cycles := 1 << u32(max(shift - 11, 0))
+	step <<= u32(max(11 - shift, 0))
+	level := abs(v.level)
+	if exponential && !decrease && level > 0x6000 {
+		cycles *= 4
+	}
+	if exponential && decrease {
+		step = (step * level) >> 15
+	}
+	v.count += 1
+	if v.count < int(cycles) {
+		return
+	}
+	v.count = 0
+	level = clamp(level + step, 0, 0x7FFF)
+	v.level = v.reg & 0x1000 != 0 ? -level : level
 }
 
 spu_read :: proc(s: ^Spu, p: u32) -> u16 {
@@ -104,6 +142,8 @@ spu_read :: proc(s: ^Spu, p: u32) -> u16 {
 	case 0x19C: return u16(s.endx)
 	case 0x19E: return u16(s.endx >> 16)
 	case 0x1AA: return s.control
+	case 0x1B8: return u16(i16(s.main_l.level))
+	case 0x1BA: return u16(i16(s.main_r.level))
 	case 0x1AE:
 		// mode bits mirror SPUCNT; bit 7 mirrors the DMA enable, bits 8/9 the
 		// DMA write/read request for the selected transfer mode
@@ -121,6 +161,11 @@ spu_read :: proc(s: ^Spu, p: u32) -> u16 {
 			return u16(s.voices[v].level)
 		}
 	}
+	if off >= 0x200 && off < 0x260 {
+		// current voice volumes, as the sweeps leave them
+		v := &s.voices[(off - 0x200) >> 2]
+		return u16(i16(off & 2 == 0 ? v.vol_l.level : v.vol_r.level))
+	}
 	return s.regs[off >> 1]
 }
 
@@ -131,8 +176,8 @@ spu_write :: proc(c: ^Console, p: u32, value: u16) {
 	if off < 0x180 {
 		v := &s.voices[off >> 4]
 		switch off & 0xF {
-		case 0x0: v.vol_l = volume(value)
-		case 0x2: v.vol_r = volume(value)
+		case 0x0: volume_set(&v.vol_l, value)
+		case 0x2: volume_set(&v.vol_r, value)
 		case 0x4: v.pitch = value
 		case 0x6: v.start = u32(value) * 8
 		case 0x8: v.adsr_lo = value
@@ -143,8 +188,8 @@ spu_write :: proc(c: ^Console, p: u32, value: u16) {
 		return
 	}
 	switch off {
-	case 0x180: s.main_l = volume(value)
-	case 0x182: s.main_r = volume(value)
+	case 0x180: volume_set(&s.main_l, value)
+	case 0x182: volume_set(&s.main_r, value)
 	case 0x188: key_on(s, u32(value))
 	case 0x18A: key_on(s, u32(value) << 16)
 	case 0x18C: key_off(s, u32(value))
@@ -323,6 +368,8 @@ spu_sample :: proc(c: ^Console) -> (i16, i16) {
 	prev_out: i32 = 0
 	for i in 0 ..< VOICES {
 		v := &s.voices[i]
+		volume_tick(&v.vol_l)
+		volume_tick(&v.vol_r)
 		if v.phase == .Off {
 			v.output = 0
 			prev_out = 0
@@ -351,8 +398,8 @@ spu_sample :: proc(c: ^Console) -> (i16, i16) {
 		out := (raw * v.level) >> 15
 		v.output = out
 		prev_out = out
-		vl := (out * i32(v.vol_l)) >> 15
-		vr := (out * i32(v.vol_r)) >> 15
+		vl := (out * v.vol_l.level) >> 15
+		vr := (out * v.vol_r.level) >> 15
 		sum_l += vl
 		sum_r += vr
 		if s.eon & (1 << u32(i)) != 0 {
@@ -392,6 +439,8 @@ spu_sample :: proc(c: ^Console) -> (i16, i16) {
 	} else {
 		_, _ = cdrom_audio_sample(&c.cdrom) // keep the CD stream moving
 	}
+	volume_tick(&s.main_l)
+	volume_tick(&s.main_r)
 	if s.irq_hit && s.control & 0x40 != 0 {
 		request_irq(c, .Spu)
 		s.irq_hit = false
@@ -407,8 +456,8 @@ spu_sample :: proc(c: ^Console) -> (i16, i16) {
 	}
 	sum_l += s.reverb_out[0]
 	sum_r += s.reverb_out[1]
-	l := clamp((sum_l * i32(s.main_l)) >> 15, -32768, 32767)
-	r := clamp((sum_r * i32(s.main_r)) >> 15, -32768, 32767)
+	l := clamp((sum_l * s.main_l.level) >> 15, -32768, 32767)
+	r := clamp((sum_r * s.main_r.level) >> 15, -32768, 32767)
 	return i16(l), i16(r)
 }
 
