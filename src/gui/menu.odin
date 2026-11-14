@@ -83,7 +83,7 @@ menu_bar :: proc(ctx: ^Context, menus: []Menu, right_text: string) -> (chosen_me
 	hline(ctx, 0, MENU_BAR_H - 1, ctx.size.x, t.border_dark)
 	hline(ctx, 0, 0, ctx.size.x, t.border_light)
 	if right_text != "" {
-		text_shadowed(ctx, ctx.size.x - text_width(right_text) - 6, 3, right_text, t.text_dim)
+		text_shadowed(ctx, ctx.size.x - text_width(right_text) - 2 * BAR_BUTTON_W - 10, 3, right_text, t.text_dim)
 	}
 
 	mouse_free := ctx.input_window == nil || menu_is_open(ctx)
@@ -189,4 +189,42 @@ menu_bar :: proc(ctx: ^Context, menus: []Menu, right_text: string) -> (chosen_me
 		menu_close(ctx) // click outside
 	}
 	return
+}
+
+BAR_BUTTON_W :: 11
+
+Bar_Button :: enum {
+	None,
+	Minimize,
+	Close,
+}
+
+// The minimize and close boxes at the right end of the menu bar.
+bar_buttons :: proc(ctx: ^Context) -> Bar_Button {
+	t := &ctx.theme
+	result := Bar_Button.None
+	mouse_free := ctx.input_window == nil && !menu_is_open(ctx)
+	for b, i in ([2]Bar_Button{.Minimize, .Close}) {
+		r := Rect{ctx.size.x - i32(2 - i) * (BAR_BUTTON_W + 1) - 1, 1, BAR_BUTTON_W, MENU_BAR_H - 3}
+		hot := mouse_free && rect_contains(r, ctx.mouse)
+		down := hot && ctx.mouse_down
+		gradient_rect(ctx, r, hot ? t.button_hot_top : t.button_top, hot ? t.button_hot_bottom : t.button_bottom)
+		if down {
+			bevel(ctx, r, t.border_dark, t.border_light)
+		} else {
+			bevel(ctx, r, t.border_light, t.border_dark)
+		}
+		if b == .Minimize {
+			fill_rect(ctx, {r.x + 3, r.y + r.h - 4, r.w - 6, 2}, t.title_text)
+		} else {
+			for k in i32(0) ..< 5 {
+				fill_rect(ctx, {r.x + 3 + k, r.y + 2 + k, 1, 1}, t.title_text)
+				fill_rect(ctx, {r.x + 7 - k, r.y + 2 + k, 1, 1}, t.title_text)
+			}
+		}
+		if hot && ctx.mouse_released && rect_contains(r, ctx.press_pos) {
+			result = b
+		}
+	}
+	return result
 }

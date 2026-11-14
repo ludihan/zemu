@@ -51,6 +51,7 @@ Context :: struct {
 
 	// input, in UI pixels
 	mouse:          [2]i32,
+	mouse_inside:   bool, // the pointer is over the window (the cursor is drawn)
 	press_pos:      [2]i32,
 	mouse_down:     bool,
 	mouse_pressed:  bool,
@@ -113,6 +114,11 @@ handle_event :: proc(ctx: ^Context, e: ^sdl.Event) {
 	#partial switch e.type {
 	case .MOUSE_MOTION:
 		ctx.mouse = {i32(e.motion.x / s), i32(e.motion.y / s)}
+		ctx.mouse_inside = true
+	case .WINDOW_MOUSE_ENTER:
+		ctx.mouse_inside = true
+	case .WINDOW_MOUSE_LEAVE:
+		ctx.mouse_inside = false
 	case .MOUSE_BUTTON_DOWN:
 		if e.button.button == sdl.BUTTON_LEFT {
 			ctx.mouse = {i32(e.button.x / s), i32(e.button.y / s)}
@@ -497,5 +503,42 @@ text_scaled :: proc(ctx: ^Context, x, y: i32, s: string, factor: i32, c: Color) 
 		dst := sdl.FRect{cx, f32(y), CELL_W * f, CELL_H * f}
 		sdl.RenderTexture(ctx.renderer, ctx.font, &src, &dst)
 		cx += CELL_W * f
+	}
+}
+
+// The mouse pointer is drawn by the toolkit, as a chunky pixel arrow at the
+// interface scale, rather than left to the operating system.
+@(private = "file", rodata)
+CURSOR := [?]string {
+	"X.......",
+	"XX......",
+	"XWX.....",
+	"XWWX....",
+	"XWWWX...",
+	"XWWWWX..",
+	"XWWWWWX.",
+	"XWWWWWWX",
+	"XWWWWXXX",
+	"XWXWWX..",
+	"XX.XWWX.",
+	"X..XWWX.",
+	"....XWWX",
+	"....XXX.",
+}
+
+draw_cursor :: proc(ctx: ^Context) {
+	if !ctx.mouse_inside {
+		return
+	}
+	for row, y in CURSOR {
+		for ch, x in row {
+			c: Color
+			switch ch {
+			case 'X': c = {0, 0, 0, 255}
+			case 'W': c = {255, 255, 255, 255}
+			case: continue
+			}
+			fill_rect(ctx, {ctx.mouse.x + i32(x), ctx.mouse.y + i32(y), 1, 1}, c)
+		}
 	}
 }
