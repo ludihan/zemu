@@ -111,6 +111,7 @@ Dmc :: struct {
 	shift:       u8,
 	bits:        u8,
 	silent:      bool,
+	start_delay: u8, // cycles until the first fetch after $4015 starts a sample
 }
 
 Apu :: struct {
@@ -275,6 +276,8 @@ apu_write :: proc(a: ^Apu, addr: u16, v: u8) {
 		} else if a.dmc.remaining == 0 {
 			a.dmc.addr = a.dmc.sample_addr
 			a.dmc.remaining = a.dmc.sample_len
+			// the first fetch comes 2 or 3 cycles later, by clock phase
+			a.dmc.start_delay = a.odd_cycle ? 2 : 3
 		}
 	case 0x4017:
 		if a.frame_reset_delay > 0 {
@@ -512,12 +515,14 @@ apu_dmc_fill :: proc(c: ^Console, v: u8) {
 @(private = "file")
 step_dmc :: proc(c: ^Console) {
 	d := &c.apu.dmc
-	if !d.buffer_full && d.remaining > 0 && !c.dma.dmc_running {
-		// The sample byte is fetched by DMA: the CPU is halted on its next
-		// read cycle and the byte arrives through apu_dmc_fill.
-		c.dma.dmc_running = true
-		c.dma.need_halt = true
-		c.dma.need_dummy_read = true
+	if d.start_delay > 0 {
+		// a sample started through $4015 waits before its first fetch
+		d.start_delay -= 1
+		if d.start_delay == 0 {
+			dmc_request(c)
+		}
+	} else {
+		dmc_request(c)
 	}
 	if d.timer > 0 {
 		d.timer -= 1
@@ -542,6 +547,19 @@ step_dmc :: proc(c: ^Console) {
 		} else {
 			d.silent = true
 		}
+	}
+}
+
+// Starts a DMA fetch of the next sample byte if the buffer needs one: the
+// CPU is halted on its next read cycle and the byte arrives through
+// apu_dmc_fill.
+@(private = "file")
+dmc_request :: proc(c: ^Console) {
+	d := &c.apu.dmc
+	if !d.buffer_full && d.remaining > 0 && !c.dma.dmc_running {
+		c.dma.dmc_running = true
+		c.dma.need_halt = true
+		c.dma.need_dummy_read = true
 	}
 }
 
