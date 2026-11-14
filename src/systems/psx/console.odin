@@ -392,6 +392,9 @@ io_read :: proc(c: ^Console, p: u32, size: u32) -> u32 {
 		return v
 	case 0x1F80_1060:
 		return 0x0000_0B88 // RAM size config
+	case 0x1F80_2000 ..= 0x1F80_2FFF:
+		// expansion 2 (debug UART, POST display): nothing is connected
+		return size == 4 ? 0xFFFF_FFFF : (size == 2 ? 0xFFFF : 0xFF)
 	}
 	return 0
 }
