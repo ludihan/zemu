@@ -46,7 +46,7 @@ for d in libc psxapi psxgpu psxgte psxetc psxpress psxspu psxcd psxsio; do
 	done
 done
 
-for main in "$TESTS"/gpu/*/main.c* "$TESTS"/dma/*/main.c* "$TESTS"/timers/main.c* "$TESTS"/cpu/*/main.c* "$TESTS"/gte/*/main.c* "$TESTS"/gte-fuzz/main.c*; do
+for main in "$TESTS"/gpu/*/main.c* "$TESTS"/dma/*/main.c* "$TESTS"/spu/*/main.c* "$TESTS"/mdec/*/main.c* "$TESTS"/timers/main.c* "$TESTS"/cpu/*/main.c* "$TESTS"/gte/*/main.c* "$TESTS"/gte-fuzz/main.c*; do
 	[ -f "$main" ] || continue
 	dir=$(dirname "$main")
 	name=$(basename "$dir")
