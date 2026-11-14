@@ -64,13 +64,13 @@ back. You can also drag a file onto the window to load it.
 
 Default controls for player 1 are the arrow keys, **Z X A S** for B A Y X,
 **Q W** for L R, **E R** for L2 R2, **Enter** for Start and **Right Shift**
-for Select. You can remap them in *CONFIG > Input*. Gamepads work
+for Select. You can remap them in *CONFIG > INPUT*. Gamepads work
 automatically with SDL's standard mapping. On a PlayStation pad, Cross is B,
 Circle is A, Square is Y and Triangle is X.
 
 ### Cheats
 
-*CHEAT > Cheat codes* takes Game Genie codes (NES, SNES `XXXX-XXXX`, Game
+*CHEAT > ADD CODE* takes Game Genie codes (NES, SNES `XXXX-XXXX`, Game
 Boy `ABC-DEF-GHI`), Pro Action Replay (SNES, Master System / Game Gear), GameShark (Game Boy, and
 PlayStation `80XXXXXX YYYY` / `30XXXXXX 00YY`), CodeBreaker (Game Boy
 Advance `3AAAAAAA 00VV` / `8AAAAAAA VVVV`) and raw `ADDRESS:VALUE` RAM
@@ -79,7 +79,7 @@ writes. Codes are kept per game in `saves/<game>.cht`.
 ### Video
 
 Games are always letterboxed with black bars and never stretched. The
-*CONFIG > Video* window has these options:
+*CONFIG > VIDEO* window has these options:
 
 * **Aspect**: *Original (TV)* uses each console's real pixel shape (8:7 for
   Nintendo, 4:3 for PlayStation), *4:3* forces a 4:3 picture, and *Square
@@ -87,7 +87,7 @@ Games are always letterboxed with black bars and never stretched. The
 * **Integer scaling** keeps the vertical scale a whole number.
 * **Smooth filter** turns on bilinear filtering (off by default).
 
-The interface has its own scale (*CONFIG > Interface*, 1x–8x) and a choice of
+The interface has its own scale (*MISC > GUI OPTS*, 1x–8x, 3x by default) and a choice of
 color themes. It does not resize itself to fit the window: a bigger window
 simply shows more desktop, and windows stay where you put them.
 
@@ -104,7 +104,7 @@ directory, for example `~/.local/share/zemu/zemu/` on Linux or
 * `saves/<game>.st0`–`.st9`: save states. They are tied to the exact game and
   zemu build that made them, and anything else is refused.
 
-For PlayStation games, point *CONFIG > Paths* at a BIOS image (512 KiB, for
+For PlayStation games, point *CONFIG > PATHS* at a BIOS image (512 KiB, for
 example `SCPH1001.BIN`). zemu does not include a BIOS.
 
 ## Project layout
