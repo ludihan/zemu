@@ -3,8 +3,8 @@ package psx
 import "core:math"
 
 // Sound Processing Unit: 24 ADPCM voices with ADSR envelopes, pitch
-// modulation and noise, plus CD audio input. Output is 44.1 kHz stereo.
-// The reverb unit is not emulated (its output volume is treated as zero).
+// modulation, noise and the reverb unit, plus CD audio input. Output is
+// 44.1 kHz stereo.
 
 SPU_RAM_SIZE :: 512 * 1024
 VOICES       :: 24
@@ -53,6 +53,11 @@ Spu :: struct {
 	noise_level: i32,
 	noise_count: int,
 	irq_hit:    bool,
+	eon:        u32,
+	reverb_base: u32, // start of the reverb work area in SPU RAM (bytes)
+	reverb_addr: u32, // current position in the work area
+	reverb_out: [2]i32,
+	reverb_odd: bool,
 }
 
 @(private = "file")
@@ -148,6 +153,11 @@ spu_write :: proc(c: ^Console, p: u32, value: u16) {
 	case 0x192: s.pmon = (s.pmon & 0x0000_FFFF) | u32(value) << 16
 	case 0x194: s.non = (s.non & 0xFFFF_0000) | u32(value)
 	case 0x196: s.non = (s.non & 0x0000_FFFF) | u32(value) << 16
+	case 0x198: s.eon = (s.eon & 0xFFFF_0000) | u32(value)
+	case 0x19A: s.eon = (s.eon & 0x0000_FFFF) | u32(value) << 16
+	case 0x1A2:
+		s.reverb_base = u32(value) * 8
+		s.reverb_addr = s.reverb_base
 	case 0x1A4: s.irq_addr = u32(value) * 8
 	case 0x1A6: s.xfer_addr = u32(value) * 8
 	case 0x1A8:
@@ -308,6 +318,7 @@ spu_sample :: proc(c: ^Console) -> (i16, i16) {
 	s := &c.spu
 	step_noise(s)
 	sum_l, sum_r: i32
+	rev_l, rev_r: i32 // input to the reverb unit (voices with EON set)
 	enabled := s.control & 0x8000 != 0
 	prev_out: i32 = 0
 	for i in 0 ..< VOICES {
@@ -340,8 +351,14 @@ spu_sample :: proc(c: ^Console) -> (i16, i16) {
 		out := (raw * v.level) >> 15
 		v.output = out
 		prev_out = out
-		sum_l += (out * i32(v.vol_l)) >> 15
-		sum_r += (out * i32(v.vol_r)) >> 15
+		vl := (out * i32(v.vol_l)) >> 15
+		vr := (out * i32(v.vol_r)) >> 15
+		sum_l += vl
+		sum_r += vr
+		if s.eon & (1 << u32(i)) != 0 {
+			rev_l += vl
+			rev_r += vr
+		}
 
 		v.frac += step
 		for v.frac >= 0x1000 {
@@ -383,7 +400,118 @@ spu_sample :: proc(c: ^Console) -> (i16, i16) {
 	if !enabled || s.control & 0x4000 == 0 {
 		return 0, 0 // SPU disabled or muted
 	}
+	// The reverb unit runs at 22.05 kHz; its output is held in between.
+	s.reverb_odd = !s.reverb_odd
+	if s.reverb_odd {
+		run_reverb(s, clamp(rev_l, -32768, 32767), clamp(rev_r, -32768, 32767))
+	}
+	sum_l += s.reverb_out[0]
+	sum_r += s.reverb_out[1]
 	l := clamp((sum_l * i32(s.main_l)) >> 15, -32768, 32767)
 	r := clamp((sum_r * i32(s.main_r)) >> 15, -32768, 32767)
 	return i16(l), i16(r)
+}
+
+// --- reverb ------------------------------------------------------------------
+
+// Reverb registers at $1F801DC0, in order.
+Reverb_Reg :: enum u32 {
+	dAPF1, dAPF2, vIIR, vCOMB1, vCOMB2, vCOMB3, vCOMB4, vWALL, vAPF1, vAPF2,
+	mLSAME, mRSAME, mLCOMB1, mRCOMB1, mLCOMB2, mRCOMB2, dLSAME, dRSAME,
+	mLDIFF, mRDIFF, mLCOMB3, mRCOMB3, mLCOMB4, mRCOMB4, dLDIFF, dRDIFF,
+	mLAPF1, mRAPF1, mLAPF2, mRAPF2, vLIN, vRIN,
+}
+
+@(private = "file")
+rreg :: #force_inline proc(s: ^Spu, r: Reverb_Reg) -> u32 {
+	return u32(s.regs[(0x1C0 >> 1) + u32(r)])
+}
+
+@(private = "file")
+rvol :: #force_inline proc(s: ^Spu, r: Reverb_Reg) -> i32 {
+	return i32(i16(s.regs[(0x1C0 >> 1) + u32(r)]))
+}
+
+// Address of a work-area entry: offsets are in 8-byte units relative to the
+// current position and wrap inside [reverb_base, end of SPU RAM).
+@(private = "file")
+reverb_address :: proc(s: ^Spu, offset: u32) -> u32 {
+	base := s.reverb_base
+	if base >= SPU_RAM_SIZE {
+		return 0
+	}
+	span := SPU_RAM_SIZE - base
+	rel := (s.reverb_addr - base + offset) % span
+	return (base + rel) & (SPU_RAM_SIZE - 2)
+}
+
+@(private = "file")
+rload :: proc(s: ^Spu, r: Reverb_Reg, minus: u32 = 0) -> i32 {
+	a := reverb_address(s, rreg(s, r) * 8 - minus)
+	return i32(i16(u16(s.ram[a]) | u16(s.ram[a + 1]) << 8))
+}
+
+@(private = "file")
+rstore :: proc(s: ^Spu, r: Reverb_Reg, v: i32) {
+	if s.control & 0x80 == 0 {
+		return // reverb writes are disabled
+	}
+	a := reverb_address(s, rreg(s, r) * 8)
+	c := u16(i16(clamp(v, -32768, 32767)))
+	s.ram[a] = u8(c)
+	s.ram[a + 1] = u8(c >> 8)
+}
+
+@(private = "file")
+mul :: #force_inline proc(a, b: i32) -> i32 {
+	return (a * b) >> 15
+}
+
+@(private = "file")
+run_reverb :: proc(s: ^Spu, in_l, in_r: i32) {
+	if s.reverb_base == 0 && s.control & 0x80 == 0 {
+		s.reverb_out = {}
+		return
+	}
+	lin := mul(in_l, rvol(s, .vLIN))
+	rin := mul(in_r, rvol(s, .vRIN))
+	wall := rvol(s, .vWALL)
+	iir := rvol(s, .vIIR)
+
+	// same-side and different-side reflections
+	reflect :: proc(s: ^Spu, dst, src: Reverb_Reg, input, wall, iir: i32) {
+		prev := rload(s, dst, 2)
+		v := mul(input + mul(rload(s, src), wall) - prev, iir) + prev
+		rstore(s, dst, v)
+	}
+	reflect(s, .mLSAME, .dLSAME, lin, wall, iir)
+	reflect(s, .mRSAME, .dRSAME, rin, wall, iir)
+	reflect(s, .mLDIFF, .dRDIFF, lin, wall, iir)
+	reflect(s, .mRDIFF, .dLDIFF, rin, wall, iir)
+
+	// early echo (comb filters)
+	c1, c2, c3, c4 := rvol(s, .vCOMB1), rvol(s, .vCOMB2), rvol(s, .vCOMB3), rvol(s, .vCOMB4)
+	lout := mul(c1, rload(s, .mLCOMB1)) + mul(c2, rload(s, .mLCOMB2)) + mul(c3, rload(s, .mLCOMB3)) + mul(c4, rload(s, .mLCOMB4))
+	rout := mul(c1, rload(s, .mRCOMB1)) + mul(c2, rload(s, .mRCOMB2)) + mul(c3, rload(s, .mRCOMB3)) + mul(c4, rload(s, .mRCOMB4))
+
+	// late reverb: two all-pass filters
+	all_pass :: proc(s: ^Spu, x: i32, m: Reverb_Reg, d: Reverb_Reg, vol: i32) -> i32 {
+		delayed := rload(s, m, rreg(s, d) * 8)
+		x1 := clamp(x - mul(vol, delayed), -32768, 32767)
+		rstore(s, m, x1)
+		return mul(x1, vol) + delayed
+	}
+	apf1, apf2 := rvol(s, .vAPF1), rvol(s, .vAPF2)
+	lout = all_pass(s, clamp(lout, -32768, 32767), .mLAPF1, .dAPF1, apf1)
+	rout = all_pass(s, clamp(rout, -32768, 32767), .mRAPF1, .dAPF1, apf1)
+	lout = all_pass(s, clamp(lout, -32768, 32767), .mLAPF2, .dAPF2, apf2)
+	rout = all_pass(s, clamp(rout, -32768, 32767), .mRAPF2, .dAPF2, apf2)
+
+	out_l := i32(i16(s.regs[0x184 >> 1]))
+	out_r := i32(i16(s.regs[0x186 >> 1]))
+	s.reverb_out = {clamp(mul(lout, out_l), -32768, 32767), clamp(mul(rout, out_r), -32768, 32767)}
+
+	// advance through the work area
+	next := (s.reverb_addr + 2) & (SPU_RAM_SIZE - 2)
+	s.reverb_addr = max(s.reverb_base, next)
 }

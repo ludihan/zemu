@@ -10,7 +10,7 @@ is no GUI library, and the font is an original one made for this project.
 | --- | --- |
 | Nintendo Entertainment System | Complete. Mappers 0-5, 7, 9, 10, 11, 21-26 (Konami VRC2/4/6 with VRC6 audio), 34, 66, 69 (Sunsoft FME-7), 71, 79, 87, 140, 180, 206, 232. Passes `nestest` and the blargg CPU, APU, MMC3 and VBL suites listed in `nes_test.odin`. |
 | Super Nintendo | 65816, PPU modes 0–7 (mode 7, offset-per-tile, hi-res, windows, color math, mosaic), DMA/HDMA, SPC700 and DSP audio. LoROM/HiROM/ExHiROM with battery saves. Matches every reference screen of PeterLemon's SNES CPU suite. |
-| PlayStation | R3000A, GTE, software GPU, DMA, timers, CD-ROM (CUE/BIN/ISO, CD-DA, XA audio), SPU, pads, memory cards, MDEC video. Needs a BIOS for discs; homebrew `.exe` files also run without one. |
+| PlayStation | R3000A, GTE, software GPU, DMA, timers, CD-ROM (CUE/BIN/ISO, CD-DA, XA audio), SPU with reverb, pads, memory cards, MDEC video. Needs a BIOS for discs; homebrew `.exe` files also run without one. |
 
 PlayStation 2 and 3 are not supported. Emulating them needs recompiling
 CPU cores and GPU-accelerated graphics on a scale far beyond these
@@ -141,8 +141,8 @@ has headless options for debugging (`--frames`, `--dump-frame`,
 * NES: a few dot-exact PPU timing tests (VBL/NMI edge races, open-bus decay) still fail.
 * SNES: no enhancement chips (Super FX, SA-1, DSP-1, …); such games are
   refused at load. Interlaced 448/478-line modes show one field.
-* PlayStation: the SPU reverb unit is not emulated. GPU polygon edges can
-  differ by one pixel from hardware on some slopes.
+* PlayStation: GPU polygon edges can differ by one pixel from hardware on
+  some slopes.
 
 ## License
 
