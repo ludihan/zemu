@@ -11,7 +11,7 @@ Console :: struct {
 	ram:       [0x800]u8,
 	vram:      [0x1000]u8, // 2 KiB console RAM + 2 KiB for four-screen carts
 	open_bus:  u8,
-	dmc_stall: int,
+	dma:       Dma,
 
 	pads:      [2]emu.Buttons,
 	pad_shift: [2]u8,
@@ -21,7 +21,20 @@ Console :: struct {
 	fingerprint: u64, // hash of the ROM image, ties save states to the game
 	pal:       bool,
 	patches:   emu.Patch_List, // Game Genie
-	dot_frac:  u8, // PAL runs 3.2 PPU dots per CPU cycle: one extra every 5
+	master_clock: u64,
+	ppu_offset:   u64, // master clocks the PPU lags behind the CPU (power-on alignment)
+	ppu_clock:    u64,
+}
+
+// DMA unit state. Both DMAs halt the CPU on a read cycle, then run on
+// alternating "get" (even) and "put" (odd) cycles, DMC taking priority.
+Dma :: struct {
+	need_halt:       bool,
+	need_dummy_read: bool,
+	dmc_running:     bool,
+	abort_dmc:       bool,
+	sprite_running:  bool,
+	sprite_page:     u8,
 }
 
 // True when the header marks the image as a PAL (European) release.
@@ -51,6 +64,7 @@ create :: proc(rom: []u8, pal := false, allocator := context.allocator) -> (^Con
 	c.pal = pal || header_is_pal(rom)
 	c.ppu.pal = c.pal
 	c.apu.pal = c.pal
+	c.ppu_offset = 1
 	power_on(c)
 	return c, .None
 }
@@ -74,7 +88,7 @@ power_on :: proc(c: ^Console) {
 
 reset :: proc(c: ^Console) {
 	ppu_reset(&c.ppu)
-	apu_reset(&c.apu)
+	apu_soft_reset(&c.apu)
 	cart_reset(&c.cart)
 	cpu_reset(c)
 }
@@ -122,29 +136,47 @@ load_save_ram :: proc(c: ^Console, data: []u8) {
 
 // --- bus -------------------------------------------------------------------
 
-// One CPU cycle: three PPU dots and one APU cycle.
-tick :: proc(c: ^Console) {
+// CPU cycles are split around their bus access on a master clock (12 per
+// CPU cycle and 4 per PPU dot on NTSC; 16 and 5 on PAL). A read happens
+// slightly before the middle of the cycle and a write slightly after, so the
+// PPU has run 5/12 or 7/12 of the cycle's dots when the access lands, which
+// is what decides VBlank flag and NMI races.
+
+@(private = "file")
+run_ppu :: #force_inline proc(c: ^Console) {
+	dot: u64 = c.pal ? 5 : 4
+	for c.ppu_clock + dot <= c.master_clock - c.ppu_offset {
+		c.ppu_clock += dot
+		ppu_step(c)
+	}
+}
+
+cycle_start :: proc(c: ^Console, is_read: bool) {
 	c.cpu.poll_nmi = c.cpu.nmi_pending
 	c.cpu.poll_irq = irq_asserted(c)
 	c.cpu.cycles += 1
-	ppu_step(c)
-	ppu_step(c)
-	ppu_step(c)
-	if c.pal {
-		c.dot_frac += 1
-		if c.dot_frac == 5 {
-			c.dot_frac = 0
-			ppu_step(c)
-		}
-	}
+	half: u64 = c.pal ? 8 : 6
+	c.master_clock += is_read ? half - 1 : half + 1
+	run_ppu(c)
 	cart_cpu_clock(&c.cart)
 	apu_step(c)
+}
 
+cycle_end :: proc(c: ^Console, is_read: bool) {
+	half: u64 = c.pal ? 8 : 6
+	c.master_clock += is_read ? half + 1 : half - 1
+	run_ppu(c)
 	line := ppu_nmi_line(&c.ppu)
 	if line && !c.cpu.nmi_line {
 		c.cpu.nmi_pending = true
 	}
 	c.cpu.nmi_line = line
+}
+
+// A CPU cycle with no bus access of interest (DMA halts, stalls).
+tick :: proc(c: ^Console) {
+	cycle_start(c, true)
+	cycle_end(c, true)
 }
 
 irq_asserted :: #force_inline proc(c: ^Console) -> bool {
@@ -187,7 +219,9 @@ bus_write :: proc(c: ^Console, addr: u16, value: u8) {
 	case 0x2000 ..= 0x3FFF:
 		ppu_reg_write(c, addr, value)
 	case 0x4014:
-		oam_dma(c, value)
+		c.dma.sprite_running = true
+		c.dma.sprite_page = value
+		c.dma.need_halt = true
 	case 0x4016:
 		c.strobe = value & 1 != 0
 		if c.strobe {
@@ -201,28 +235,72 @@ bus_write :: proc(c: ^Console, addr: u16, value: u8) {
 	}
 }
 
-@(private = "file")
-oam_dma :: proc(c: ^Console, page: u8) {
-	tick(c)
-	if c.cpu.cycles & 1 != 0 {
-		tick(c)
+// Runs pending DMA before a CPU read of `addr` (the halted read is
+// repeated as dummy reads, with their side effects).
+process_dma :: proc(c: ^Console, addr: u16) {
+	d := &c.dma
+	cycle_start(c, true)
+	if d.abort_dmc && d.dmc_running {
+		d.dmc_running = false
+		d.abort_dmc = false
+		d.need_dummy_read = false
+	} else {
+		_ = bus_read(c, addr)
 	}
-	base := u16(page) << 8
-	for i in u16(0) ..< 256 {
-		tick(c)
-		v := bus_read(c, base + i)
-		tick(c)
-		c.ppu.oam[c.ppu.oam_addr] = v
-		c.ppu.oam_addr += 1
-	}
-	flush_dmc_stall(c)
-}
+	cycle_end(c, true)
+	d.need_halt = false
 
-// Applies cycles the CPU lost to DMC sample fetches.
-flush_dmc_stall :: proc(c: ^Console) {
-	for c.dmc_stall > 0 {
-		c.dmc_stall -= 1
-		tick(c)
+	sprite_counter := 0
+	sprite_addr: u16 = 0
+	value: u8
+	begin :: proc(c: ^Console) {
+		d := &c.dma
+		switch {
+		case d.abort_dmc:
+			d.dmc_running = false
+			d.abort_dmc = false
+			d.need_dummy_read = false
+			d.need_halt = false
+		case d.need_halt: d.need_halt = false
+		case d.need_dummy_read: d.need_dummy_read = false
+		}
+		cycle_start(c, true)
+	}
+	for d.dmc_running || d.sprite_running {
+		get := c.apu.odd_cycle // get/put cycles follow the APU clock phase
+		if get {
+			if d.dmc_running && !d.need_halt && !d.need_dummy_read {
+				begin(c)
+				v := bus_read(c, c.apu.dmc.addr)
+				cycle_end(c, true)
+				d.dmc_running = false
+				apu_dmc_fill(c, v)
+			} else if d.sprite_running {
+				begin(c)
+				value = bus_read(c, u16(d.sprite_page) << 8 | sprite_addr)
+				cycle_end(c, true)
+				sprite_addr += 1
+				sprite_counter += 1
+			} else {
+				begin(c)
+				_ = bus_read(c, addr)
+				cycle_end(c, true)
+			}
+		} else {
+			if d.sprite_running && sprite_counter & 1 != 0 {
+				begin(c)
+				bus_write(c, 0x2004, value)
+				cycle_end(c, true)
+				sprite_counter += 1
+				if sprite_counter == 0x200 {
+					d.sprite_running = false
+				}
+			} else {
+				begin(c)
+				_ = bus_read(c, addr)
+				cycle_end(c, true)
+			}
+		}
 	}
 }
 
