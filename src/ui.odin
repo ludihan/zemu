@@ -126,11 +126,6 @@ ui_draw_menu_bar :: proc(app: ^App) {
 		status = fmt.tprintf("%s%s", emu.SYSTEM_INFO[machine_kind(app.machine)].short_name, region)
 	}
 	m, item := gui.menu_bar(&app.ui, menus, status)
-	switch gui.bar_buttons(&app.ui) {
-	case .None:
-	case .Minimize: sdl.MinimizeWindow(app.window)
-	case .Close: app.running = false
-	}
 	if m < 0 {
 		return
 	}
