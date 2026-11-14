@@ -68,6 +68,7 @@ App :: struct {
 	win_about:   gui.Window,
 	win_message: gui.Window,
 	win_cheats:  gui.Window,
+	win_state:   gui.Window,
 	cheats:      Cheat_List,
 	cheat_list:  gui.List_State,
 	cheat_code_field: gui.Text_Field,
@@ -122,6 +123,7 @@ app_init :: proc(app: ^App, data_dir := "") -> bool {
 		return false
 	}
 	sdl.SetRenderVSync(app.renderer, app.cfg.vsync ? 1 : 0)
+	_ = sdl.HideCursor() // the interface draws its own pointer
 
 	if !gui.init(&app.ui, app.renderer) {
 		log.errorf("failed to create font texture: %s", sdl.GetError())
@@ -628,6 +630,9 @@ app_draw :: proc(app: ^App, dt: f64) {
 		ui_draw_menu_bar(app)
 	}
 	ui_draw_overlay(app)
+	if app.menu_active {
+		gui.draw_cursor(ctx)
+	}
 	gui.end(ctx)
 }
 

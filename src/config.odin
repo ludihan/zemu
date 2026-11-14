@@ -80,10 +80,10 @@ DEFAULT_KEYS_P2 :: Key_Map {
 }
 
 BUTTON_NAMES := [emu.Button]string {
-	.Up     = "Up",
-	.Down   = "Down",
-	.Left   = "Left",
-	.Right  = "Right",
+	.Up     = "UP",
+	.Down   = "DOWN",
+	.Left   = "LEFT",
+	.Right  = "RIGHT",
 	.A      = "A",
 	.B      = "B",
 	.X      = "X",
@@ -92,13 +92,13 @@ BUTTON_NAMES := [emu.Button]string {
 	.R      = "R",
 	.L2     = "L2",
 	.R2     = "R2",
-	.Select = "Select",
-	.Start  = "Start",
+	.Select = "SELECT",
+	.Start  = "START",
 }
 
 config_defaults :: proc() -> Config {
 	return Config {
-		ui_scale      = 2,
+		ui_scale      = 3,
 		theme         = 0,
 		snow          = true,
 		integer_scale = false,

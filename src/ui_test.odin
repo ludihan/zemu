@@ -109,12 +109,13 @@ menus_open_windows_and_escape_closes_them :: proc(t: ^testing.T) {
 	key(&h, .ESCAPE)
 	testing.expect(t, !app.win_load.open, "Esc closes the focused window")
 
-	// Keyboard navigation: open CONFIG, go to "Interface..." and confirm.
+	// Keyboard navigation: open CONFIG, go down to PATHS (skipping the
+	// separator) and confirm.
 	click(&h, 60, 6)
 	testing.expect(t, gui.menu_is_open(&app.ui), "CONFIG menu should open")
-	for _ in 0 ..< 5 {key(&h, .DOWN)}
+	for _ in 0 ..< 4 {key(&h, .DOWN)}
 	key(&h, .RETURN)
-	testing.expect(t, app.win_ui.open, "Interface window opens from the keyboard")
+	testing.expect(t, app.win_paths.open, "PATHS window opens from the keyboard")
 }
 
 @(test)
