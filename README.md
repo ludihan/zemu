@@ -9,7 +9,7 @@ is no GUI library, and the font is an original one made for this project.
 | System | Status |
 | --- | --- |
 | Nintendo Entertainment System | Complete. Mappers 0-5, 7, 9, 10, 11, 21-26 (Konami VRC2/4/6 with VRC6 audio), 34, 66, 69 (Sunsoft FME-7), 71, 79, 87, 140, 180, 206, 232. Master-clock CPU/PPU alignment and a cycle-accurate DMA unit. Passes `nestest` and the blargg CPU, interrupt, reset, APU, PPU VBL/NMI, open-bus, OAM and MMC3 suites listed in `nes_test.odin`. |
-| Super Nintendo | 65816, PPU modes 0–7 (mode 7, offset-per-tile, hi-res, interlace, windows, color math, mosaic), DMA/HDMA, SPC700 and DSP audio. LoROM/HiROM/ExHiROM with battery saves, and Super FX (GSU) cartridges. Matches every reference screen of PeterLemon's SNES CPU suite and 55 of his Super FX tests. |
+| Super Nintendo | 65816, PPU modes 0–7 (mode 7, offset-per-tile, hi-res, interlace, windows, color math, mosaic), DMA/HDMA, SPC700 and DSP audio. LoROM/HiROM/ExHiROM with battery saves, Super FX (GSU) cartridges and MSU-1 (data and CD-quality audio tracks for ROM hacks and translations). Matches every reference screen of PeterLemon's SNES CPU suite and 55 of his Super FX tests. |
 | Game Boy / Color | SM83 CPU, PPU with full CGB support (VRAM banks, color palettes, HDMA, double speed), APU, MBC1/2/3 (with clock)/5, battery saves, the DMG OAM corruption bug. Passes blargg's `cpu_instrs`, `instr_timing`, `mem_timing(-2)`, `halt_bug`, `interrupt_time`, every `dmg_sound` and `cgb_sound` test and most of `oam_bug`, and renders dmg-acid2 and cgb-acid2 correctly. |
 | Game Boy Advance | ARM7TDMI (ARM and Thumb, with the prefetch pipeline), all six video modes with affine backgrounds and sprites, windows and blending, DMA, timers, Game Boy sound plus Direct Sound, SRAM/Flash/EEPROM saves, the cartridge clock (Pokémon, Boktai). The BIOS is emulated, so none is needed. Passes jsmolka's `gba-tests` and DenSinH's FuzzARM ROMs. |
 | Sega Master System / Game Gear | Z80 (passes ZEXDOC and ZEXALL, including undocumented flags), Mode 4 VDP with line interrupts, sprite zoom and collision, SN76489 sound with Game Gear stereo, Sega mapper with cartridge RAM. |
@@ -110,6 +110,9 @@ directory, for example `~/.local/share/zemu/zemu/` on Linux or
 * `saves/<game>.cht`: cheat codes
 * `saves/<game>.st0`–`.st9`: save states. They are tied to the exact game and
   zemu build that made them, and anything else is refused.
+
+MSU-1 games find their files next to the ROM: `game.sfc` uses `game.msu`
+for data and `game-0.pcm`, `game-1.pcm`, ... for audio tracks.
 
 For PlayStation games, point *CONFIG > PATHS* at a BIOS image (512 KiB, for
 example `SCPH1001.BIN`). zemu does not include a BIOS.
