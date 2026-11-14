@@ -375,8 +375,10 @@ Line_State :: struct {
 	width:    int,
 }
 
-@(private = "file")
-line_state: Line_State // scratch, reused every line (render is single-threaded)
+// Scratch reused every line. Thread-local, so consoles running on different
+// threads (the test runner does this) never share it.
+@(private = "file", thread_local)
+line_state: Line_State
 
 @(private = "file")
 compute_windows :: proc(p: ^Ppu, ls: ^Line_State) {
