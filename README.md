@@ -11,6 +11,7 @@ is no GUI library, and the font is an original one made for this project.
 | Nintendo Entertainment System | Complete. Mappers 0-5, 7, 9, 10, 11, 21-26 (Konami VRC2/4/6 with VRC6 audio), 34, 66, 69 (Sunsoft FME-7), 71, 79, 87, 140, 180, 206, 232. Passes `nestest` and the blargg CPU, APU, MMC3 and VBL suites listed in `nes_test.odin`. |
 | Super Nintendo | 65816, PPU modes 0–7 (mode 7, offset-per-tile, hi-res, windows, color math, mosaic), DMA/HDMA, SPC700 and DSP audio. LoROM/HiROM/ExHiROM with battery saves. Matches every reference screen of PeterLemon's SNES CPU suite. |
 | Game Boy / Color | SM83 CPU, PPU with full CGB support (VRAM banks, color palettes, HDMA, double speed), APU, MBC1/2/3 (with clock)/5, battery saves. Passes blargg's `cpu_instrs`, `instr_timing`, `mem_timing` and most of `dmg_sound`, and renders dmg-acid2 and cgb-acid2 correctly. |
+| Game Boy Advance | ARM7TDMI (ARM and Thumb, with the prefetch pipeline), all six video modes with affine backgrounds and sprites, windows and blending, DMA, timers, Game Boy sound plus Direct Sound, SRAM/Flash/EEPROM saves. The BIOS is emulated, so none is needed. Passes jsmolka's `gba-tests` and DenSinH's FuzzARM ROMs. |
 | Sega Master System / Game Gear | Z80 (passes ZEXDOC and ZEXALL, including undocumented flags), Mode 4 VDP with line interrupts, sprite zoom and collision, SN76489 sound with Game Gear stereo, Sega mapper with cartridge RAM. |
 | PlayStation | R3000A, GTE, software GPU, DMA, timers, CD-ROM (CUE/BIN/ISO, CD-DA, XA audio), SPU with reverb, pads, memory cards, MDEC video. Needs a BIOS for discs; homebrew `.exe` files also run without one. |
 
@@ -71,7 +72,8 @@ Circle is A, Square is Y and Triangle is X.
 
 *CHEAT > Cheat codes* takes Game Genie codes (NES, SNES `XXXX-XXXX`, Game
 Boy `ABC-DEF-GHI`), Pro Action Replay (SNES, Master System / Game Gear), GameShark (Game Boy, and
-PlayStation `80XXXXXX YYYY` / `30XXXXXX 00YY`) and raw `ADDRESS:VALUE` RAM
+PlayStation `80XXXXXX YYYY` / `30XXXXXX 00YY`), CodeBreaker (Game Boy
+Advance `3AAAAAAA 00VV` / `8AAAAAAA VVVV`) and raw `ADDRESS:VALUE` RAM
 writes. Codes are kept per game in `saves/<game>.cht`.
 
 ### Video
@@ -123,7 +125,7 @@ dispatches over a tagged union (`Machine` in `machine.odin`).
 
 ## Testing
 
-The NES, SNES, Game Boy and PlayStation tests run freely redistributable test ROMs. They
+The NES, SNES, Game Boy, GBA and PlayStation tests run freely redistributable test ROMs. They
 are not included, so clone the suites and point the tests at them:
 
 ```sh
@@ -135,7 +137,10 @@ mkdir gbtests && git clone https://github.com/retrio/gb-test-roms gbtests/gb-tes
 # gbtests/dmg-acid2/dmg-acid2.gb and gbtests/cgb-acid2/cgb-acid2.gbc
 # ZEXDOC/ZEXALL for the Z80, e.g. from floooh/chips-test (tests/roms)
 mkdir z80tests && cp chips-test/tests/roms/zex*.com z80tests/
-ZEMU_NES_TESTS=nes-test-roms ZEMU_SNES_TESTS=SNES ZEMU_PSX_TESTS=PSX ZEMU_GB_TESTS=gbtests ZEMU_Z80_TESTS=z80tests ./build.sh test
+git clone https://github.com/jsmolka/gba-tests
+git clone https://github.com/DenSinH/FuzzARM
+ZEMU_NES_TESTS=nes-test-roms ZEMU_SNES_TESTS=SNES ZEMU_PSX_TESTS=PSX ZEMU_GB_TESTS=gbtests \
+ZEMU_Z80_TESTS=z80tests ZEMU_GBA_TESTS=gba-tests ZEMU_GBA_FUZZ=FuzzARM ./build.sh test
 ```
 
 `./build.sh test` also runs the interface tests, which drive the real app
@@ -160,6 +165,9 @@ has headless options for debugging (`--frames`, `--dump-frame`,
 * NES: a few dot-exact PPU timing tests (VBL/NMI edge races, open-bus decay) still fail.
 * SNES: no enhancement chips (Super FX, SA-1, DSP-1, …); such games are
   refused at load. Interlaced 448/478-line modes show one field.
+* Game Boy Advance: the official sound driver's BIOS calls (used by a few
+  games instead of their own mixer) are not emulated, wait states are
+  approximate, and DMA3 video capture is missing.
 * PlayStation: GPU polygon edges can differ by one pixel from hardware on
   some slopes.
 
