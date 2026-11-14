@@ -13,7 +13,7 @@ is no GUI library, and the font is an original one made for this project.
 | Game Boy / Color | SM83 CPU, PPU with full CGB support (VRAM banks, color palettes, HDMA, double speed), APU, MBC1/2/3 (with clock)/5, battery saves, the DMG OAM corruption bug. Passes blargg's `cpu_instrs`, `instr_timing`, `mem_timing(-2)`, `halt_bug`, `interrupt_time`, every `dmg_sound` and `cgb_sound` test and most of `oam_bug`, and renders dmg-acid2 and cgb-acid2 correctly. |
 | Game Boy Advance | ARM7TDMI (ARM and Thumb, with the prefetch pipeline), all six video modes with affine backgrounds and sprites, windows and blending, DMA, timers, Game Boy sound plus Direct Sound, SRAM/Flash/EEPROM saves, the cartridge clock (Pokémon, Boktai). The BIOS is emulated, so none is needed. Passes jsmolka's `gba-tests` and DenSinH's FuzzARM ROMs. |
 | Sega Master System / Game Gear | Z80 (passes ZEXDOC and ZEXALL, including undocumented flags), Mode 4 VDP with line interrupts, sprite zoom and collision, SN76489 sound with Game Gear stereo, Sega mapper with cartridge RAM. |
-| PlayStation | R3000A, GTE, software GPU, DMA, timers, CD-ROM (CUE/BIN/ISO, CD-DA, XA audio), SPU with reverb, pads, memory cards, MDEC video. Needs a BIOS for discs; homebrew `.exe` files also run without one. |
+| PlayStation | R3000A, GTE, software GPU, DMA, timers, CD-ROM (CUE/BIN/ISO, CD-DA, XA audio), SPU with reverb, pads, memory cards, MDEC video. Needs a BIOS for discs; homebrew `.exe` files run without one on an emulated BIOS (TTY, critical sections, interrupt hooks, events). Polygon rasterization, Gouraud/UV interpolation, the palette cache and texture flipping match hardware VRAM dumps from JaCzekanski's ps1-tests. |
 
 NES and SNES games run with PAL (50 Hz) timing when the ROM header or a
 file name tag such as `(Europe)` or `(PAL)` marks them as European releases.
@@ -146,9 +146,17 @@ mkdir gbtests && git clone https://github.com/retrio/gb-test-roms gbtests/gb-tes
 mkdir z80tests && cp chips-test/tests/roms/zex*.com z80tests/
 git clone https://github.com/jsmolka/gba-tests
 git clone https://github.com/DenSinH/FuzzARM
+git clone https://github.com/JaCzekanski/ps1-tests
+git clone --branch v0.19 https://github.com/Lameguy64/PSn00bSDK
+PSN00BSDK=PSn00bSDK PS1_TESTS=ps1-tests tools/ps1-tests/build.sh   # needs clang + ld.lld
 ZEMU_NES_TESTS=nes-test-roms ZEMU_SNES_TESTS=SNES ZEMU_PSX_TESTS=PSX ZEMU_GB_TESTS=gbtests \
-ZEMU_Z80_TESTS=z80tests ZEMU_GBA_TESTS=gba-tests ZEMU_GBA_FUZZ=FuzzARM ./build.sh test
+ZEMU_Z80_TESTS=z80tests ZEMU_GBA_TESTS=gba-tests ZEMU_GBA_FUZZ=FuzzARM \
+ZEMU_PS1_TESTS=ps1-tests ./build.sh test
 ```
+
+JaCzekanski's ps1-tests ship VRAM dumps captured on a real PlayStation;
+`tools/ps1-tests/build.sh` compiles them with clang (no GCC MIPS toolchain
+needed) and the tests compare zemu's VRAM against those dumps.
 
 `./build.sh test` also runs the interface tests, which drive the real app
 headlessly with synthetic mouse and keyboard input.
@@ -178,8 +186,11 @@ has headless options for debugging (`--frames`, `--dump-frame`,
 * Game Boy Advance: the official sound driver's BIOS calls (used by a few
   games instead of their own mixer) are not emulated, and the prefetch
   buffer is modelled only roughly.
-* PlayStation: GPU polygon edges can differ by one pixel from hardware on
-  some slopes.
+* PlayStation: overlapping VRAM-to-VRAM copies shifted 1-3 pixels to the
+  right still differ from hardware in one column; ps1-tests that need the GTE
+  library (`lines`, `gte/*`) are not built by the clang script yet; the
+  emulated BIOS covers what homebrew SDKs use, not the memory card or CD
+  file services games need (use a real BIOS for discs).
 
 ## License
 
