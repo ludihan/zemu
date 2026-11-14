@@ -20,7 +20,7 @@ vdp_seek :: proc(c: ^Console, addr: u16, code: u8) {
 setup :: proc(t: ^testing.T, gg: bool) -> ^Console {
 	rom := make([]u8, 0x8000) // all NOPs; the CPU never touches the VDP
 	defer delete(rom)
-	c, err := create(rom, gg)
+	c, err := create(rom, gg ? .Game_Gear : .Master_System)
 	testing.expect_value(t, err, emu.Load_Error.None)
 	vdp_reg(c, 0, 0x04)  // mode 4
 	vdp_reg(c, 1, 0x40)  // display on
@@ -126,7 +126,7 @@ program_runs_interrupts_and_sound :: proc(t: ^testing.T) {
 	copy(rom[0x38:], irq)
 	copy(rom[0x100:], []u8{0x04, 0x80, 0x60, 0x81, 0xFF, 0x82, 0xFF, 0x85, 0xFB, 0x86, 0x00, 0x87})
 
-	c, err := create(rom, false)
+	c, err := create(rom, .Master_System)
 	if !testing.expect_value(t, err, emu.Load_Error.None) {return}
 	defer destroy(c)
 	audio := new(emu.Audio_Buffer)
@@ -170,7 +170,7 @@ vram_fill :: proc(c: ^Console, addr: u16, data: ..u8) {
 tms9918_graphics_modes_and_sprites :: proc(t: ^testing.T) {
 	rom := make([]u8, 0x8000)
 	defer delete(rom)
-	c, err := create(rom, false)
+	c, err := create(rom, .Master_System)
 	if !testing.expect_value(t, err, emu.Load_Error.None) {return}
 	defer destroy(c)
 	WHITE, DARK_RED, LIGHT_BLUE, BLACK := u32(0xFFFFFF), u32(0xD4524D), u32(0x7D76FC), u32(0x000000)

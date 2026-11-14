@@ -23,7 +23,7 @@ banked_rom :: proc(codemasters: bool) -> []u8 {
 codemasters_mapper_switches_all_three_slots :: proc(t: ^testing.T) {
 	rom := banked_rom(true)
 	defer delete(rom)
-	c, err := create(rom, false)
+	c, err := create(rom, .Master_System)
 	if !testing.expect_value(t, err, nil) {return}
 	defer destroy(c)
 	testing.expect_value(t, c.mapper_kind, Mapper_Kind.Codemasters)
@@ -60,7 +60,7 @@ codemasters_mapper_switches_all_three_slots :: proc(t: ^testing.T) {
 sega_mapper_is_the_default :: proc(t: ^testing.T) {
 	rom := banked_rom(false)
 	defer delete(rom)
-	c, err := create(rom, false)
+	c, err := create(rom, .Master_System)
 	if !testing.expect_value(t, err, nil) {return}
 	defer destroy(c)
 	testing.expect_value(t, c.mapper_kind, Mapper_Kind.Sega)
@@ -68,4 +68,22 @@ sega_mapper_is_the_default :: proc(t: ^testing.T) {
 	testing.expect_value(t, bus_read(c, 0x8000), 3)
 	bus_write(c, 0x0000, 5) // ROM: ignored
 	testing.expect_value(t, bus_read(c, 0x0000), 0)
+}
+
+// The SG-1000 maps up to 48 KiB of ROM straight in and has 1 KiB of RAM.
+@(test)
+sg1000_memory_map :: proc(t: ^testing.T) {
+	rom := banked_rom(false)
+	defer delete(rom)
+	c, err := create(rom[:0xC000], .SG1000)
+	if !testing.expect_value(t, err, nil) {return}
+	defer destroy(c)
+	testing.expect_value(t, bus_read(c, 0x0000), 0)
+	testing.expect_value(t, bus_read(c, 0x4000), 1)
+	testing.expect_value(t, bus_read(c, 0x8000), 2)
+	bus_write(c, 0xFFFF, 3) // no mapper
+	testing.expect_value(t, bus_read(c, 0x8000), 2)
+	bus_write(c, 0xC005, 0x42)
+	testing.expect_value(t, bus_read(c, 0xC405), 0x42) // mirrored every 1 KiB
+	testing.expect_value(t, bus_read(c, 0xFC05), 0x42)
 }

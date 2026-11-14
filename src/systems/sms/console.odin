@@ -8,6 +8,12 @@ LINE_CYCLES     :: 228
 LINES_PER_FRAME :: 262
 CART_RAM_SIZE   :: 0x8000
 
+Model :: enum u8 {
+	Master_System,
+	Game_Gear,
+	SG1000, // TMS9918 video only, ROM mapped straight in, 1 KiB of RAM
+}
+
 Mapper_Kind :: enum u8 {
 	Sega,
 	Codemasters, // bank registers at $0000/$4000/$8000 (Micro Machines, Dizzy, ...)
@@ -24,7 +30,9 @@ Console :: struct {
 	cart_ram_used: bool, // a game enabled cartridge RAM: worth saving
 	mapper_kind:  Mapper_Kind,
 	mapper:       [4]u8, // Sega: $FFFC-$FFFF; Codemasters: banks for the three slots
+	model:        Model,
 	game_gear:    bool,
+	sg1000:       bool,
 	io_control:   u8,
 	pads:         [2]emu.Buttons,
 	pause_held:   bool,
@@ -37,7 +45,7 @@ Console :: struct {
 	patches:      emu.Patch_List,
 }
 
-create :: proc(rom: []u8, game_gear: bool, allocator := context.allocator) -> (^Console, emu.Load_Error) {
+create :: proc(rom: []u8, model: Model, allocator := context.allocator) -> (^Console, emu.Load_Error) {
 	data := rom
 	if len(data) % 0x4000 == 512 {
 		data = data[512:] // copier header
@@ -61,9 +69,13 @@ create :: proc(rom: []u8, game_gear: bool, allocator := context.allocator) -> (^
 		c.rom[i] = 0xFF
 	}
 	c.rom_banks = size / 0x4000
-	c.mapper_kind = detect_mapper(c.rom)
-	c.game_gear = game_gear
-	c.vdp.game_gear = game_gear
+	if model != .SG1000 {
+		c.mapper_kind = detect_mapper(c.rom)
+	}
+	c.model = model
+	c.game_gear = model == .Game_Gear
+	c.sg1000 = model == .SG1000
+	c.vdp.game_gear = c.game_gear
 	c.fingerprint = emu.fingerprint(data)
 	c.z80.bus = {user = c, read = bus_read, write = bus_write, input = port_in, output = port_out}
 	reset(c)
@@ -191,6 +203,16 @@ codemasters_write :: proc(c: ^Console, addr: u16, v: u8) {
 
 bus_read :: proc(user: rawptr, addr: u16) -> u8 {
 	c := (^Console)(user)
+	if c.sg1000 {
+		if addr >= 0xC000 {
+			return c.ram[addr & 0x03FF] // 1 KiB, mirrored
+		}
+		v := rom_byte(c, u8(addr >> 14), addr)
+		if c.patches.count > 0 {
+			v = emu.patch_apply(&c.patches, u32(addr), v)
+		}
+		return v
+	}
 	if c.mapper_kind == .Codemasters {
 		v := codemasters_read(c, addr)
 		if addr < 0xC000 && c.patches.count > 0 {
@@ -223,6 +245,12 @@ bus_read :: proc(user: rawptr, addr: u16) -> u8 {
 
 bus_write :: proc(user: rawptr, addr: u16, v: u8) {
 	c := (^Console)(user)
+	if c.sg1000 {
+		if addr >= 0xC000 {
+			c.ram[addr & 0x03FF] = v
+		}
+		return
+	}
 	if c.mapper_kind == .Codemasters {
 		codemasters_write(c, addr, v)
 		return
@@ -335,7 +363,7 @@ port_out :: proc(user: rawptr, port: u16, v: u8) {
 // Writes RAM for cheat codes.
 poke :: proc(c: ^Console, addr: u32, v: u8) {
 	if addr >= 0xC000 && addr <= 0xFFFF {
-		c.ram[addr & 0x1FFF] = v
+		c.ram[addr & (c.sg1000 ? 0x03FF : 0x1FFF)] = v
 	}
 }
 
