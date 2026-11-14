@@ -92,3 +92,62 @@ fuzzarm_suite :: proc(t: ^testing.T) {
 		destroy(c)
 	}
 }
+
+// Drives the RTC's serial protocol the way games do and reads the date.
+@(test)
+rtc_datetime :: proc(t: ^testing.T) {
+	r: Rtc
+	rtc_detect(&r, {})
+	r.present = true
+	rtc_write(&r, 0x0800_00C8, 1)
+	rtc_write(&r, 0x0800_00C6, 7)
+	rtc_write(&r, 0x0800_00C4, 1)
+	rtc_write(&r, 0x0800_00C4, 5)
+	cmd: u8 = 0x65 // 0110 + datetime (010) + read
+	for i := 7; i >= 0; i -= 1 {
+		bit := u16((cmd >> uint(i)) & 1) << 1
+		rtc_write(&r, 0x0800_00C4, 4 | bit)
+		rtc_write(&r, 0x0800_00C4, 5 | bit)
+	}
+	rtc_write(&r, 0x0800_00C6, 5) // SIO becomes an input
+	bytes: [7]u8
+	for i in 0 ..< 7 {
+		for b in 0 ..< 8 {
+			rtc_write(&r, 0x0800_00C4, 4)
+			rtc_write(&r, 0x0800_00C4, 5)
+			v, _ := rtc_read(&r, 0x0800_00C4)
+			bytes[i] |= u8((v >> 1) & 1) << uint(b)
+		}
+	}
+	month := int(bytes[1] >> 4) * 10 + int(bytes[1] & 0xF)
+	day := int(bytes[2] >> 4) * 10 + int(bytes[2] & 0xF)
+	minute := int(bytes[5] >> 4) * 10 + int(bytes[5] & 0xF)
+	testing.expectf(t, month >= 1 && month <= 12 && day >= 1 && day <= 31 && minute < 60, "bad date %v", bytes)
+	testing.expectf(t, bytes == r.clock, "read %v, clock %v", bytes, r.clock)
+}
+
+// Loading a state must reproduce exactly the frames that followed it.
+@(test)
+save_state_round_trip :: proc(t: ^testing.T) {
+	dir := os.get_env("ZEMU_GBA_TESTS", context.temp_allocator)
+	if dir == "" {
+		return
+	}
+	rom, err := os.read_entire_file(fmt.tprintf("%s/ppu/stripes.gba", dir), context.allocator)
+	if err != nil {
+		return
+	}
+	defer delete(rom)
+	c, _ := create(rom)
+	defer destroy(c)
+	for _ in 0 ..< 30 {run_frame(c, {}, nil)}
+	state := save_state(c)
+	defer delete(state)
+	for _ in 0 ..< 30 {run_frame(c, {}, nil)}
+	want := c.ppu.framebuffer
+	want_pc := c.cpu.pc
+	testing.expect(t, load_state(c, state))
+	for _ in 0 ..< 30 {run_frame(c, {}, nil)}
+	testing.expect(t, c.ppu.framebuffer == want && c.cpu.pc == want_pc, "state replay diverged")
+	testing.expect(t, !load_state(c, state[:len(state) - 1]), "truncated state accepted")
+}
