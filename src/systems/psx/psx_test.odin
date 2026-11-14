@@ -222,7 +222,9 @@ ps1_tests_vram_matches_hardware :: proc(t: ^testing.T) {
 		{name = "gpu/triangle"},
 		{name = "gpu/quad"},
 		{name = "gpu/rectangles"},
-		{name = "gpu/lines"},
+		// The test never sets the last colour of its Gouraud polyline, so the
+		// final segment fades towards whatever its stack held (compiler-dependent).
+		{name = "gpu/lines", known = 64},
 		{name = "gpu/clipping"},
 		// The hardware dump has leftovers from an earlier program outside the
 		// 320x240 area the test draws into.
@@ -305,6 +307,81 @@ ps1_tests_assertions_pass :: proc(t: ^testing.T) {
 		fails := strings.count(out, "fail -")
 		testing.expectf(t, passes > 0 && fails == 0, "%s: %d passed, %d failed\n%s", name, passes, fails, out)
 		destroy(c)
+	}
+}
+
+// ps1-tests whose TTY output on a real console was saved as psx.log.
+@(test)
+ps1_tests_tty_matches_hardware :: proc(t: ^testing.T) {
+	dir := os.get_env("ZEMU_PS1_TESTS", context.temp_allocator)
+	if dir == "" {
+		log.warn("ZEMU_PS1_TESTS not set")
+		return
+	}
+	Case :: struct {
+		name, log: string,
+		press:     emu.Buttons, // held to start the test (gte-fuzz waits for a button)
+		frames:    int,
+	}
+	cases := []Case {
+		{"gte/test-all", "psx.log", {}, 300},
+		{"gte-fuzz", "gte_valid_0xc0ffee_50.log", {.Start}, 3000},
+	}
+	for tc in cases {
+		base := tc.name[strings.last_index(tc.name, "/") + 1:]
+		path := fmt.tprintf("%s/%s/%s.exe", dir, tc.name, base)
+		want, err := os.read_entire_file(fmt.tprintf("%s/%s/%s", dir, tc.name, tc.log), context.allocator)
+		if !os.exists(path) || err != nil {
+			log.warnf("%s: not built", tc.name)
+			continue
+		}
+		defer delete(want)
+		exe, _ := os.read_entire_file(path, context.allocator)
+		c, load_err := create(nil, nil, exe)
+		delete(exe)
+		if load_err != .None {
+			log.errorf("%s: %v", tc.name, load_err)
+			continue
+		}
+		defer destroy(c)
+
+		// The log is long, so the TTY is drained as the program prints, and
+		// every line of the hardware log must appear in it, in order (the SDK
+		// zemu builds with prints a few extra lines of its own).
+		lines := strings.split_lines(strings.trim_space(string(want)))
+		defer delete(lines)
+		matched := 0
+		pending: [dynamic]u8
+		defer delete(pending)
+		drain :: proc(c: ^Console, pending: ^[dynamic]u8, lines: []string, matched: ^int) {
+			append(pending, ..c.hle.tty[:c.hle.tty_len])
+			c.hle.tty_len = 0
+			for {
+				nl := strings.index_byte(string(pending[:]), '\n')
+				if nl < 0 {break}
+				line := strings.trim_right(string(pending[:nl]), "\r")
+				if matched^ < len(lines) && line == strings.trim_right(lines[matched^], "\r") {
+					matched^ += 1
+				}
+				remove_range(pending, 0, nl + 1)
+			}
+		}
+		for frame in 0 ..< tc.frames {
+			c.pads[0] = frame >= 60 && frame < 70 ? tc.press : {}
+			c.frame_ready = false
+			for budget := LINE_CYCLES * LINES_PER_FRAME * 2; !c.frame_ready && budget > 0; {
+				n := cpu_step(c)
+				budget -= n
+				tick(c, n)
+				if c.hle.tty_len > len(c.hle.tty) - 1024 {
+					drain(c, &pending, lines, &matched)
+				}
+			}
+			drain(c, &pending, lines, &matched)
+			if matched == len(lines) {break}
+		}
+		testing.expectf(t, matched == len(lines), "%s: TTY matches hardware up to line %d of %d: %q",
+			tc.name, matched, len(lines), matched < len(lines) ? lines[matched] : "")
 	}
 }
 
