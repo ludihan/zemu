@@ -4,6 +4,7 @@ import "core:os"
 import "core:strings"
 
 import "emu"
+import "systems/gb"
 import "systems/nes"
 import "systems/psx"
 import "systems/snes"
@@ -13,6 +14,7 @@ Machine :: union {
 	^nes.Console,
 	^snes.Console,
 	^psx.Console,
+	^gb.Console,
 }
 
 // Picks a system from the file extension, or returns false.
@@ -52,6 +54,10 @@ machine_create :: proc(kind: emu.System_Kind, path: string, bios: []u8) -> (mach
 		rom := read_rom(path) or_return
 		defer delete(rom)
 		return snes.create(rom)
+	case .GB:
+		rom := read_rom(path) or_return
+		defer delete(rom)
+		return gb.create(rom)
 	case .PSX:
 		ext := strings.to_lower(os.ext(path), context.temp_allocator)
 		if ext == ".exe" || ext == ".psx" {
@@ -77,6 +83,8 @@ machine_destroy :: proc(m: ^Machine) {
 		snes.destroy(c)
 	case ^psx.Console:
 		psx.destroy(c)
+	case ^gb.Console:
+		gb.destroy(c)
 	}
 	m^ = nil
 }
@@ -89,6 +97,8 @@ machine_kind :: proc(m: Machine) -> emu.System_Kind {
 		return .SNES
 	case ^psx.Console:
 		return .PSX
+	case ^gb.Console:
+		return .GB
 	}
 	return .NES
 }
@@ -101,6 +111,8 @@ machine_run_frame :: proc(m: Machine, input: emu.Input, audio: ^emu.Audio_Buffer
 		snes.run_frame(c, input, audio)
 	case ^psx.Console:
 		psx.run_frame(c, input, audio)
+	case ^gb.Console:
+		gb.run_frame(c, input, audio)
 	}
 }
 
@@ -112,6 +124,8 @@ machine_reset :: proc(m: Machine) {
 		snes.reset(c)
 	case ^psx.Console:
 		psx.reset(c)
+	case ^gb.Console:
+		gb.reset(c)
 	}
 }
 
@@ -123,6 +137,8 @@ machine_frame :: proc(m: Machine, cfg: ^Config) -> emu.Frame {
 		return snes.frame(c)
 	case ^psx.Console:
 		return psx.frame(c)
+	case ^gb.Console:
+		return gb.frame(c)
 	}
 	return {}
 }
@@ -138,6 +154,8 @@ machine_pixel_aspect :: proc(m: Machine, f: emu.Frame) -> f32 {
 	case ^psx.Console:
 		// Every PlayStation video mode fills a 4:3 screen.
 		return (4.0 / 3.0) * f32(f.height) / f32(max(f.width, 1))
+	case ^gb.Console:
+		return 1 // square pixels on the LCD
 	}
 	return 1
 }
@@ -150,6 +168,8 @@ machine_save_ram :: proc(m: Machine) -> []u8 {
 		return snes.save_ram(c)
 	case ^psx.Console:
 		return psx.save_ram(c)
+	case ^gb.Console:
+		return gb.save_ram(c)
 	}
 	return nil
 }
@@ -162,6 +182,8 @@ machine_load_save_ram :: proc(m: Machine, data: []u8) {
 		snes.load_save_ram(c, data)
 	case ^psx.Console:
 		psx.load_save_ram(c, data)
+	case ^gb.Console:
+		gb.load_save_ram(c, data)
 	}
 }
 
@@ -174,6 +196,8 @@ machine_save_state :: proc(m: Machine, allocator := context.allocator) -> []u8 {
 		return snes.save_state(c, allocator)
 	case ^psx.Console:
 		return psx.save_state(c, allocator)
+	case ^gb.Console:
+		return gb.save_state(c, allocator)
 	}
 	return nil
 }
@@ -188,6 +212,8 @@ machine_load_state :: proc(m: Machine, data: []u8) -> bool {
 		return snes.load_state(c, data)
 	case ^psx.Console:
 		return psx.load_state(c, data)
+	case ^gb.Console:
+		return gb.load_state(c, data)
 	}
 	return false
 }
