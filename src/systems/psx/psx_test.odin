@@ -6,6 +6,7 @@ import "core:image/png"
 import "core:log"
 import "core:os"
 import "core:path/filepath"
+import "core:strings"
 import "core:testing"
 
 import "../../emu"
@@ -198,5 +199,111 @@ image_pixels :: proc(img: ^image.Image) -> []u8 {
 		return img.pixels[:]
 	} else {
 		return img.pixels.buf[:]
+	}
+}
+
+// ZEMU_PS1_TESTS points at a checkout of JaCzekanski's ps1-tests with each
+// test built next to its sources as <test>.exe (no BIOS needed: the HLE BIOS
+// serves PSn00bSDK). Tests with a vram.png captured on hardware must leave
+// VRAM matching it.
+@(test)
+ps1_tests_vram_matches_hardware :: proc(t: ^testing.T) {
+	dir := os.get_env("ZEMU_PS1_TESTS", context.temp_allocator)
+	if dir == "" {
+		log.warn("ZEMU_PS1_TESTS not set")
+		return
+	}
+	Case :: struct {
+		name:  string,
+		w, h:  int, // compare only this top-left region (0 = all of VRAM)
+		known: int, // differing pixels still accepted (documented below)
+	}
+	tests := []Case {
+		{name = "gpu/triangle"},
+		{name = "gpu/quad"},
+		{name = "gpu/rectangles"},
+		{name = "gpu/lines"},
+		{name = "gpu/clipping"},
+		// The hardware dump has leftovers from an earlier program outside the
+		// 320x240 area the test draws into.
+		{name = "gpu/transparency", w = 320, h = 240},
+		{name = "gpu/texture-overflow"},
+		{name = "gpu/texture-flip"},
+		{name = "gpu/uv-interpolation"},
+		{name = "gpu/clut-cache"},
+		{name = "gpu/mask-bit"},
+		// One column per row still differs in same-row copies shifted 1-3
+		// pixels to the right (the 16-pixel copy buffer is not exact yet).
+		{name = "gpu/vram-to-vram-overlap", known = 270},
+	}
+	for tc in tests {
+		name := tc.name
+		exe_path := fmt.tprintf("%s/%s/%s.exe", dir, name, name[strings.last_index(name, "/") + 1:])
+		ref_path := fmt.tprintf("%s/%s/vram.png", dir, name)
+		if !os.exists(exe_path) || !os.exists(ref_path) {
+			log.warnf("%s: not built or no reference", name)
+			continue
+		}
+		c, ok := run_exe(exe_path, 30)
+		if !ok {
+			testing.expectf(t, false, "%s: did not load", name)
+			continue
+		}
+		diff := vram_difference(c, ref_path, tc.w, tc.h)
+		testing.expectf(t, diff >= 0 && diff <= tc.known, "%s: %d VRAM pixels differ from hardware", name, diff)
+		destroy(c)
+	}
+}
+
+// Pixels whose 15-bit colour differs from a VRAM dump taken on hardware.
+@(private = "file")
+vram_difference :: proc(c: ^Console, png_path: string, region_w := 0, region_h := 0) -> int {
+	img, err := image.load_from_file(png_path, {.alpha_drop_if_present})
+	if err != nil {
+		return -1
+	}
+	defer image.destroy(img)
+	px := image_pixels(img)
+	if img.width != VRAM_W || img.height != VRAM_H {
+		return -1
+	}
+	rw := region_w > 0 ? region_w : VRAM_W
+	rh := region_h > 0 ? region_h : VRAM_H
+	bad := 0
+	for i in 0 ..< VRAM_W * VRAM_H {
+		if i % VRAM_W >= rw || i / VRAM_W >= rh {
+			continue
+		}
+		v := c.gpu.vram[i]
+		r, g, b := px[i * img.channels] >> 3, px[i * img.channels + 1] >> 3, px[i * img.channels + 2] >> 3
+		if u16(r) != v & 31 || u16(g) != (v >> 5) & 31 || u16(b) != (v >> 10) & 31 {
+			bad += 1
+		}
+	}
+	return bad
+}
+
+// The ps1-tests that check registers with assertions and print "pass - ..."
+// or "fail - ..." through the BIOS TTY.
+@(test)
+ps1_tests_assertions_pass :: proc(t: ^testing.T) {
+	dir := os.get_env("ZEMU_PS1_TESTS", context.temp_allocator)
+	if dir == "" {
+		log.warn("ZEMU_PS1_TESTS not set")
+		return
+	}
+	for name in ([]string{"dma/dpcr", "dma/otc-test", "gpu/gp0-e1", "gpu/gpustat"}) {
+		path := fmt.tprintf("%s/%s/%s.exe", dir, name, name[strings.last_index(name, "/") + 1:])
+		if !os.exists(path) {
+			log.warnf("%s: not built", name)
+			continue
+		}
+		c, ok := run_exe(path, 120)
+		if !ok {continue}
+		out := tty_output(c)
+		passes := strings.count(out, "pass -")
+		fails := strings.count(out, "fail -")
+		testing.expectf(t, passes > 0 && fails == 0, "%s: %d passed, %d failed\n%s", name, passes, fails, out)
+		destroy(c)
 	}
 }
