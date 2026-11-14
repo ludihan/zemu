@@ -146,7 +146,7 @@ gpu_status :: proc(g: ^Gpu) -> u32 {
 	if g.draw_display {s |= 1 << 10}
 	if g.set_mask {s |= 1 << 11}
 	if g.check_mask {s |= 1 << 12}
-	if g.interlace && g.field {s |= 1 << 13}
+	if !g.interlace || g.field {s |= 1 << 13} // always set when not interlaced
 	if g.tex_disable {s |= 1 << 15}
 	s |= (g.hres & 0x7) << 16 // includes the 368-pixel bit
 	if g.vres_480 {s |= 1 << 19}
