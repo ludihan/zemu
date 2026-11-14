@@ -112,16 +112,21 @@ wait :: #force_inline proc(c: ^Console, addr: u32, wide: bool) -> int {
 	case 0x05, 0x06:
 		return wide ? 1 : 0
 	case 0x08 ..= 0x0D:
-		region := int((addr >> 25) & 3) - 4
-		if region < 0 || region > 2 {region = 0}
-		// Sequential code fetches with the prefetch buffer enabled are
-		// nearly free; approximate every other access as a mix.
-		s := c.rom_s[region]
-		n := c.rom_n[region]
-		if c.prefetch {
-			return wide ? s : 0
+		region := int(addr >> 25) - 4 // wait state 0, 1 or 2 mirror
+		// Sequential accesses (the next halfword, not crossing a 128 KiB
+		// block) use the S timing, everything else the N timing. With the
+		// prefetch buffer on, sequential code fetches are hidden by it.
+		seq := addr == c.rom_next && addr & 0x1FFFF != 0
+		c.rom_next = addr + (wide ? 4 : 2)
+		first := seq ? c.rom_s[region] : c.rom_n[region]
+		if c.prefetch && c.fetching && seq {
+			first = 0
 		}
-		return wide ? n + s + 1 : n
+		if wide {
+			second := c.prefetch && c.fetching ? 0 : c.rom_s[region]
+			return first + second + 1
+		}
+		return first
 	case 0x0E, 0x0F:
 		return c.sram_wait
 	}
@@ -217,13 +222,17 @@ read32_rotated :: proc(c: ^Console, addr: u32) -> u32 {
 }
 
 fetch16 :: #force_inline proc(c: ^Console, addr: u32) -> u16 {
+	c.fetching = true
 	v := read16(c, addr)
+	c.fetching = false
 	c.last_fetch = u32(v) * 0x0001_0001
 	return v
 }
 
 fetch32 :: #force_inline proc(c: ^Console, addr: u32) -> u32 {
+	c.fetching = true
 	v := read32(c, addr)
+	c.fetching = false
 	c.last_fetch = v
 	return v
 }

@@ -34,6 +34,8 @@ Console :: struct {
 	rom_s:        [3]int,
 	sram_wait:    int,
 	prefetch:     bool,
+	rom_next:     u32,  // address a sequential cartridge access would use
+	fetching:     bool, // the current access is an opcode fetch
 
 	bios_latch:   u32,
 	last_fetch:   u32,
