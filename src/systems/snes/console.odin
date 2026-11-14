@@ -131,6 +131,9 @@ run_frame :: proc(c: ^Console, input: emu.Input, audio: ^emu.Audio_Buffer) {
 frame :: proc(c: ^Console) -> emu.Frame {
 	p := &c.ppu
 	h := clamp(p.height, 1, MAX_HEIGHT)
+	if p.interlace_frame {
+		h *= 2
+	}
 	if p.hires_frame {
 		return {pixels = p.fb_high[:HIRES_WIDTH * h], width = HIRES_WIDTH, height = h, pitch = HIRES_WIDTH}
 	}

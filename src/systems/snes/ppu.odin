@@ -56,9 +56,11 @@ Ppu :: struct {
 	range_over, time_over: bool,
 
 	// output
-	fb_low:      [SCREEN_WIDTH * MAX_HEIGHT]u32,
-	fb_high:     [HIRES_WIDTH * MAX_HEIGHT]u32,
+	fb_low:      [SCREEN_WIDTH * MAX_HEIGHT * 2]u32,
+	fb_high:     [HIRES_WIDTH * MAX_HEIGHT * 2]u32,
 	hires_frame: bool, // any line this frame used a 512-pixel mode
+	interlace_frame: bool, // this frame was interlaced: rows hold both fields
+	field:       int,  // 0 or 1, flips every frame
 	height:      int,
 }
 
@@ -308,6 +310,8 @@ ppu_vblank :: proc(p: ^Ppu) {
 
 ppu_frame_start :: proc(p: ^Ppu) {
 	p.hires_frame = false
+	p.interlace_frame = false
+	p.field ~= 1
 	p.range_over = false
 	p.time_over = false
 }
@@ -494,6 +498,11 @@ render_bg :: proc(p: ^Ppu, ls: ^Line_State, bg_index: int, line: int) {
 	y_line := line
 	if mosaic_size > 1 {
 		y_line = line - (line - 1) %% mosaic_size
+	}
+	if hires && p.setini & 0x01 != 0 {
+		// Interlaced hi-res: the field picks even or odd background lines,
+		// doubling the vertical resolution.
+		y_line = y_line * 2 + p.field
 	}
 
 	width := hires ? HIRES_WIDTH : SCREEN_WIDTH
@@ -819,8 +828,15 @@ ppu_render_line :: proc(c: ^Console, line: int) {
 	if hires {
 		p.hires_frame = true
 	}
-	low_row := p.fb_low[y * SCREEN_WIDTH:][:SCREEN_WIDTH]
-	high_row := p.fb_high[y * HIRES_WIDTH:][:HIRES_WIDTH]
+	// Interlace: each field fills every other row of a double-height
+	// picture, so both fields together show the full 448/478 lines.
+	row := y
+	if p.setini & 0x01 != 0 {
+		p.interlace_frame = true
+		row = y * 2 + p.field
+	}
+	low_row := p.fb_low[row * SCREEN_WIDTH:][:SCREEN_WIDTH]
+	high_row := p.fb_high[row * HIRES_WIDTH:][:HIRES_WIDTH]
 
 	if p.inidisp & 0x80 != 0 {
 		for &px in low_row {px = 0}
