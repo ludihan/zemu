@@ -13,6 +13,9 @@ is no GUI library, and the font is an original one made for this project.
 | Game Boy / Color | SM83 CPU, PPU with full CGB support (VRAM banks, color palettes, HDMA, double speed), APU, MBC1/2/3 (with clock)/5, battery saves. Passes blargg's `cpu_instrs`, `instr_timing`, `mem_timing` and most of `dmg_sound`, and renders dmg-acid2 and cgb-acid2 correctly. |
 | PlayStation | R3000A, GTE, software GPU, DMA, timers, CD-ROM (CUE/BIN/ISO, CD-DA, XA audio), SPU with reverb, pads, memory cards, MDEC video. Needs a BIOS for discs; homebrew `.exe` files also run without one. |
 
+NES and SNES games run with PAL (50 Hz) timing when the ROM header or a
+file name tag such as `(Europe)` or `(PAL)` marks them as European releases.
+
 PlayStation 2 and 3 are not supported. Emulating them needs recompiling
 CPU cores and GPU-accelerated graphics on a scale far beyond these
 interpreters.

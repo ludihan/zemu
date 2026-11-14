@@ -283,7 +283,7 @@ app_load_game :: proc(app: ^App, path: string) -> bool {
 	app.menu_active = false
 	app.frame_acc = 0
 	app.win_load.open = false
-	osd_show(app, "%s loaded (%s)", os.stem(path), info.short_name)
+	osd_show(app, "%s loaded (%s%s)", os.stem(path), info.short_name, machine_fps(app.machine) < 55 ? " PAL" : "")
 	return true
 }
 
@@ -475,8 +475,7 @@ app_emulate :: proc(app: ^App, dt: f64) {
 		app.frame_acc = 0
 		return
 	}
-	info := emu.SYSTEM_INFO[machine_kind(app.machine)]
-	period := 1.0 / info.fps
+	period := 1.0 / machine_fps(app.machine)
 	input := read_input(&app.cfg, &app.pads)
 
 	frames := 0

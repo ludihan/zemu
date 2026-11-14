@@ -106,7 +106,8 @@ ui_draw_menu_bar :: proc(app: ^App) {
 
 	status := "ZEMU " + APP_VERSION
 	if has_game {
-		status = fmt.tprintf("%s  ZEMU %s", emu.SYSTEM_INFO[machine_kind(app.machine)].short_name, APP_VERSION)
+		region := machine_fps(app.machine) < 55 ? " PAL" : ""
+		status = fmt.tprintf("%s%s  ZEMU %s", emu.SYSTEM_INFO[machine_kind(app.machine)].short_name, region, APP_VERSION)
 	}
 	m, item := gui.menu_bar(&app.ui, menus, status)
 	if m < 0 {

@@ -35,6 +35,19 @@ is_supported_file :: proc(path: string) -> bool {
 	return ok
 }
 
+// Common naming conventions for European releases ("(E)", "(Europe)",
+// "(PAL)", ...). Many NES dumps only record the region in the file name.
+filename_says_pal :: proc(path: string) -> bool {
+	name := strings.to_lower(os.base(path), context.temp_allocator)
+	tags := [?]string{"(e)", "(europe)", "(pal)", "(eu)", "(germany)", "(france)", "(spain)", "(italy)", "(australia)", "(uk)", "(sweden)", "(netherlands)"}
+	for t in tags {
+		if strings.contains(name, t) {
+			return true
+		}
+	}
+	return false
+}
+
 // Loads a game. Cartridge images are read whole; PlayStation discs are
 // opened and streamed sector by sector.
 machine_create :: proc(kind: emu.System_Kind, path: string, bios: []u8) -> (machine: Machine, err: emu.Load_Error) {
@@ -45,15 +58,16 @@ machine_create :: proc(kind: emu.System_Kind, path: string, bios: []u8) -> (mach
 		}
 		return data, .None
 	}
+	pal := filename_says_pal(path)
 	switch kind {
 	case .NES:
 		rom := read_rom(path) or_return
 		defer delete(rom)
-		return nes.create(rom)
+		return nes.create(rom, pal)
 	case .SNES:
 		rom := read_rom(path) or_return
 		defer delete(rom)
-		return snes.create(rom)
+		return snes.create(rom, pal)
 	case .GB:
 		rom := read_rom(path) or_return
 		defer delete(rom)
@@ -216,4 +230,19 @@ machine_load_state :: proc(m: Machine, data: []u8) -> bool {
 		return gb.load_state(c, data)
 	}
 	return false
+}
+
+// Frames per second of the running console (PAL consoles run at 50 Hz).
+machine_fps :: proc(m: Machine) -> f64 {
+	switch c in m {
+	case ^nes.Console:
+		return nes.fps(c)
+	case ^snes.Console:
+		return snes.fps(c)
+	case ^psx.Console:
+		return emu.SYSTEM_INFO[.PSX].fps
+	case ^gb.Console:
+		return emu.SYSTEM_INFO[.GB].fps
+	}
+	return 60
 }
