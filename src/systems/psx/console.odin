@@ -41,6 +41,7 @@ Console :: struct {
 	scratch:      [1024]u8,
 	bios:         [BIOS_SIZE]u8,
 	has_bios:     bool,
+	hle:          Hle_Bios, // stands in for the BIOS when none is loaded
 
 	i_stat:       u32,
 	i_mask:       u32,
@@ -126,8 +127,11 @@ reset :: proc(c: ^Console) {
 	c.i_mask = 0
 	c.line = 0
 	c.line_cycle = 0
+	hle_reset(&c.hle)
 	if !c.has_bios && len(c.exe) > 0 {
-		// No BIOS: start the program directly (homebrew / test programs).
+		// No BIOS: start the program directly (homebrew / test programs),
+		// with exceptions going to the RAM vector the HLE BIOS serves.
+		c.cpu.sr &= ~u32(SR_BEV)
 		exe_load(c)
 	}
 }
@@ -185,9 +189,12 @@ request_irq :: proc(c: ^Console, irq: Irq) {
 
 // --- timing ----------------------------------------------------------------
 
-@(private = "file")
 tick :: proc(c: ^Console, cycles: int) {
 	c.cycles += u64(cycles)
+	if c.gpu.busy > 0 {
+		// the GPU clock is 11/7 of the CPU's (53.69 vs 33.87 MHz)
+		c.gpu.busy -= cycles * 11 / 7 + 1
+	}
 	timers_tick(c, cycles)
 	cdrom_tick(c, cycles)
 	sio_tick(c, cycles)

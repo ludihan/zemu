@@ -114,6 +114,11 @@ cpu_step :: proc(c: ^Console) -> int {
 		raise_exception(c, .Interrupt)
 	}
 
+	// Without a BIOS image, its entry points are emulated.
+	if !c.has_bios && hle_intercept(c) {
+		return 4
+	}
+
 	pc := cpu.pc
 	if pc & 3 != 0 {
 		cpu.bad_vaddr = pc
