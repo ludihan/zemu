@@ -49,6 +49,8 @@ Wave :: struct {
 	length_on: bool,
 	shift:    u8, // output level code
 	ram:      [16]u8,
+	just_read: bool, // a sample was fetched on the last 2 MHz tick
+	just_read_at: int,
 }
 
 Noise :: struct {
@@ -70,6 +72,7 @@ Apu :: struct {
 	noise:     Noise,
 	nr50, nr51: u8,
 	power:     bool,
+	cgb:       bool, // CGB wave RAM access and power-off rules
 	seq_timer: int,
 	seq_step:  u8,
 	regs:      [0x30]u8, // raw register values for read-back
@@ -83,8 +86,10 @@ Apu :: struct {
 
 apu_reset :: proc(a: ^Apu) {
 	ram := a.wave.ram
+	cgb := a.cgb
 	a^ = {}
 	a.wave.ram = ram
+	a.cgb = cgb
 	a.power = true
 	a.nr50 = 0x77
 	a.nr51 = 0xF3
@@ -106,7 +111,16 @@ READ_MASK := [0x30]u8 {
 
 apu_read :: proc(a: ^Apu, addr: u16) -> u8 {
 	if addr >= 0xFF30 {
-		return a.wave.ram[addr - 0xFF30]
+		w := &a.wave
+		if w.enabled {
+			// While playing, wave RAM accesses hit the byte being played; on
+			// DMG only if it was fetched on this very cycle.
+			if !a.cgb && !w.just_read {
+				return 0xFF
+			}
+			return w.ram[w.pos >> 1]
+		}
+		return w.ram[addr - 0xFF30]
 	}
 	i := int(addr - 0xFF10)
 	if addr == 0xFF26 {
@@ -173,11 +187,21 @@ write_length_control :: proc(a: ^Apu, length: ^int, length_on: ^bool, enabled: ^
 
 apu_write :: proc(a: ^Apu, addr: u16, v: u8) {
 	if addr >= 0xFF30 {
-		a.wave.ram[addr - 0xFF30] = v
+		w := &a.wave
+		if w.enabled {
+			if a.cgb || w.just_read {
+				w.ram[w.pos >> 1] = v
+			}
+			return
+		}
+		w.ram[addr - 0xFF30] = v
 		return
 	}
 	if !a.power && addr != 0xFF26 {
 		// While powered off only the DMG length counters accept writes.
+		if a.cgb {
+			return
+		}
 		switch addr {
 		case 0xFF11: a.sq[0].length = 64 - int(v & 0x3F)
 		case 0xFF16: a.sq[1].length = 64 - int(v & 0x3F)
@@ -241,8 +265,19 @@ apu_write :: proc(a: ^Apu, addr: u16, v: u8) {
 		w.freq = (w.freq & 0xFF) | u16(v & 7) << 8
 		write_length_control(a, &w.length, &w.length_on, &w.enabled, 256, v)
 		if v & 0x80 != 0 {
+			if !a.cgb && w.enabled && w.timer <= 2 {
+				// DMG: retriggering just as a sample is fetched corrupts the
+				// start of wave RAM with the block being read.
+				offset := int(((w.pos + 1) >> 1) & 0xF)
+				if offset < 4 {
+					w.ram[0] = w.ram[offset]
+				} else {
+					base := offset & ~int(3)
+					for k in 0 ..< 4 {w.ram[k] = w.ram[base + k]}
+				}
+			}
 			w.enabled = w.dac
-			w.timer = (2048 - int(w.freq)) * 2
+			w.timer = (2048 - int(w.freq)) * 2 + 6 // 3 ticks of start delay
 			w.pos = 0
 		}
 	case 0xFF20:
@@ -277,7 +312,9 @@ apu_write :: proc(a: ^Apu, addr: u16, v: u8) {
 			a.wave = {}
 			a.noise = {}
 			a.wave.ram = ram
-			a.sq[0].length, a.sq[1].length, a.wave.length, a.noise.length = lengths[0], lengths[1], lengths[2], lengths[3]
+			if !a.cgb { // the CGB clears the length counters too
+				a.sq[0].length, a.sq[1].length, a.wave.length, a.noise.length = lengths[0], lengths[1], lengths[2], lengths[3]
+			}
 			a.nr50 = 0
 			a.nr51 = 0
 			a.regs = {}
@@ -364,7 +401,8 @@ step_sequencer :: proc(a: ^Apu) {
 
 // Advances the APU by `cycles` 4.19 MHz clocks and pushes output samples.
 apu_step :: proc(a: ^Apu, cycles: int, out: ^emu.Audio_Buffer) {
-	for _ in 0 ..< cycles {
+	a.wave.just_read_at = -1
+	for i in 0 ..< cycles {
 		if a.power {
 			a.seq_timer += 1
 			if a.seq_timer >= 8192 {
@@ -383,6 +421,7 @@ apu_step :: proc(a: ^Apu, cycles: int, out: ^emu.Audio_Buffer) {
 			if w.timer <= 0 {
 				w.timer += (2048 - int(w.freq)) * 2
 				w.pos = (w.pos + 1) & 31
+				w.just_read_at = i
 			}
 			n := &a.noise
 			n.timer -= 1
@@ -397,6 +436,8 @@ apu_step :: proc(a: ^Apu, cycles: int, out: ^emu.Audio_Buffer) {
 		}
 		mix(a, out)
 	}
+	// "Just read" means the fetch happened on the final 2 MHz tick.
+	a.wave.just_read = a.wave.just_read_at >= cycles - 2
 }
 
 @(private = "file")

@@ -25,6 +25,7 @@ Sound :: struct {
 
 sound_reset :: proc(s: ^Sound) {
 	s^ = {}
+	s.psg.cgb = true // the GBA has the CGB wave RAM behaviour, without the DMG quirks
 	gb.apu_reset(&s.psg)
 	gb.apu_write(&s.psg, 0xFF26, 0x00) // the GBA starts with sound off
 	s.bias = 0x200
