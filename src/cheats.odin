@@ -6,6 +6,7 @@ import "core:strings"
 
 import "emu"
 import "systems/gb"
+import "systems/gba"
 import "systems/nes"
 import "systems/psx"
 import "systems/sms"
@@ -154,6 +155,7 @@ decode_gb_genie :: proc(code: string) -> (c: Cheat, ok: bool) {
 //   SNES  Game Genie (XXXX-XXXX), Pro Action Replay (AAAAAAVV)
 //   GB    Game Genie (ABC-DEF[-GHI]), GameShark (01VVLLHH)
 //   PSX   GameShark (80AAAAAA VVVV, 30AAAAAA 00VV)
+//   GBA   CodeBreaker (3AAAAAAA 00VV, 8AAAAAAA VVVV)
 decode_cheat :: proc(kind: emu.System_Kind, code: string) -> (c: Cheat, ok: bool) {
 	trimmed := strings.trim_space(code)
 	// raw ADDRESS:VALUE works everywhere
@@ -191,6 +193,15 @@ decode_cheat :: proc(kind: emu.System_Kind, code: string) -> (c: Cheat, ok: bool
 		if len(s) == 8 {
 			v := hex_value(s) or_return
 			return {kind = .Ram_Write8, addr = (v >> 8) & 0xFFFF, value = u16(v & 0xFF), compare = -1}, true
+		}
+	case .GBA:
+		if len(s) == 12 {
+			addr := hex_value(s[1:8]) or_return
+			val := hex_value(s[8:12]) or_return
+			switch s[0] {
+			case '3': return {kind = .Ram_Write8, addr = addr, value = u16(val & 0xFF), compare = -1}, true
+			case '8': return {kind = .Ram_Write16, addr = addr, value = u16(val), compare = -1}, true
+			}
 		}
 	case .PSX:
 		if len(s) == 12 {
@@ -244,6 +255,7 @@ cheats_sync :: proc(m: Machine, list: ^Cheat_List) {
 	case ^snes.Console: patches = &c.patches
 	case ^gb.Console:   patches = &c.patches
 	case ^sms.Console:  patches = &c.patches
+	case ^gba.Console:  patches = &c.patches
 	case ^psx.Console:
 	}
 	if patches == nil {
@@ -270,6 +282,11 @@ cheats_apply :: proc(m: Machine, list: ^Cheat_List) {
 		case ^snes.Console: snes.poke(c, ch.addr, u8(ch.value))
 		case ^gb.Console:   gb.poke(c, ch.addr, u8(ch.value))
 		case ^sms.Console:  sms.poke(c, ch.addr, u8(ch.value))
+		case ^gba.Console:
+			gba.poke(c, ch.addr, u8(ch.value))
+			if ch.kind == .Ram_Write16 {
+				gba.poke(c, ch.addr + 1, u8(ch.value >> 8))
+			}
 		case ^psx.Console:
 			if ch.kind == .Ram_Write16 {
 				psx.poke16(c, ch.addr, ch.value)

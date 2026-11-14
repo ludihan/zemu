@@ -558,6 +558,7 @@ draw_cheats_window :: proc(app: ^App) {
 		case .GB:   hint = "Game Genie (ABC-DEF-GHI) or GameShark"
 		case .PSX:  hint = "GameShark (80XXXXXX YYYY / 30XXXXXX 00YY)"
 		case .SMS, .GG: hint = "Action Replay (00AAAAVV) or ADDR:VAL"
+		case .GBA:  hint = "CodeBreaker (3AAAAAAA 00VV) or ADDR:VAL"
 		}
 		gui.label_dim(ctx, 0, y, hint)
 	}

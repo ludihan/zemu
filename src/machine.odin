@@ -5,6 +5,7 @@ import "core:strings"
 
 import "emu"
 import "systems/gb"
+import "systems/gba"
 import "systems/nes"
 import "systems/psx"
 import "systems/sms"
@@ -17,6 +18,7 @@ Machine :: union {
 	^psx.Console,
 	^gb.Console,
 	^sms.Console,
+	^gba.Console,
 }
 
 // Picks a system from the file extension, or returns false.
@@ -78,6 +80,10 @@ machine_create :: proc(kind: emu.System_Kind, path: string, bios: []u8) -> (mach
 		rom := read_rom(path) or_return
 		defer delete(rom)
 		return sms.create(rom, kind == .GG)
+	case .GBA:
+		rom := read_rom(path) or_return
+		defer delete(rom)
+		return gba.create(rom)
 	case .PSX:
 		ext := strings.to_lower(os.ext(path), context.temp_allocator)
 		if ext == ".exe" || ext == ".psx" {
@@ -107,6 +113,8 @@ machine_destroy :: proc(m: ^Machine) {
 		gb.destroy(c)
 	case ^sms.Console:
 		sms.destroy(c)
+	case ^gba.Console:
+		gba.destroy(c)
 	}
 	m^ = nil
 }
@@ -123,6 +131,8 @@ machine_kind :: proc(m: Machine) -> emu.System_Kind {
 		return .GB
 	case ^sms.Console:
 		return c.game_gear ? .GG : .SMS
+	case ^gba.Console:
+		return .GBA
 	}
 	return .NES
 }
@@ -139,6 +149,8 @@ machine_run_frame :: proc(m: Machine, input: emu.Input, audio: ^emu.Audio_Buffer
 		gb.run_frame(c, input, audio)
 	case ^sms.Console:
 		sms.run_frame(c, input, audio)
+	case ^gba.Console:
+		gba.run_frame(c, input, audio)
 	}
 }
 
@@ -154,6 +166,8 @@ machine_reset :: proc(m: Machine) {
 		gb.reset(c)
 	case ^sms.Console:
 		sms.reset(c)
+	case ^gba.Console:
+		gba.reset(c)
 	}
 }
 
@@ -169,6 +183,8 @@ machine_frame :: proc(m: Machine, cfg: ^Config) -> emu.Frame {
 		return gb.frame(c)
 	case ^sms.Console:
 		return sms.frame(c)
+	case ^gba.Console:
+		return gba.frame(c)
 	}
 	return {}
 }
@@ -189,6 +205,8 @@ machine_pixel_aspect :: proc(m: Machine, f: emu.Frame) -> f32 {
 	case ^sms.Console:
 		// Master System pixels are 8:7 like Nintendo's; the Game Gear LCD's are wider.
 		return c.game_gear ? 6.0 / 5.0 : 8.0 / 7.0
+	case ^gba.Console:
+		return 1
 	}
 	return 1
 }
@@ -205,6 +223,8 @@ machine_save_ram :: proc(m: Machine) -> []u8 {
 		return gb.save_ram(c)
 	case ^sms.Console:
 		return sms.save_ram(c)
+	case ^gba.Console:
+		return gba.save_ram(c)
 	}
 	return nil
 }
@@ -221,6 +241,8 @@ machine_load_save_ram :: proc(m: Machine, data: []u8) {
 		gb.load_save_ram(c, data)
 	case ^sms.Console:
 		sms.load_save_ram(c, data)
+	case ^gba.Console:
+		gba.load_save_ram(c, data)
 	}
 }
 
@@ -237,6 +259,8 @@ machine_save_state :: proc(m: Machine, allocator := context.allocator) -> []u8 {
 		return gb.save_state(c, allocator)
 	case ^sms.Console:
 		return sms.save_state(c, allocator)
+	case ^gba.Console:
+		return gba.save_state(c, allocator)
 	}
 	return nil
 }
@@ -255,6 +279,8 @@ machine_load_state :: proc(m: Machine, data: []u8) -> bool {
 		return gb.load_state(c, data)
 	case ^sms.Console:
 		return sms.load_state(c, data)
+	case ^gba.Console:
+		return gba.load_state(c, data)
 	}
 	return false
 }
@@ -272,6 +298,8 @@ machine_fps :: proc(m: Machine) -> f64 {
 		return emu.SYSTEM_INFO[.GB].fps
 	case ^sms.Console:
 		return sms.fps(c)
+	case ^gba.Console:
+		return gba.fps(c)
 	}
 	return 60
 }
