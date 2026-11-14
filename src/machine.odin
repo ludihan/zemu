@@ -190,13 +190,21 @@ machine_frame :: proc(m: Machine, cfg: ^Config) -> emu.Frame {
 }
 
 // Width of one pixel relative to its height, as displayed on a television.
+// SNES frames taller than this are interlaced (448 or 478 rows).
+MAX_PROGRESSIVE_SNES_LINES :: 239
+
 machine_pixel_aspect :: proc(m: Machine, f: emu.Frame) -> f32 {
 	switch c in m {
 	case ^nes.Console:
 		return 8.0 / 7.0
 	case ^snes.Console:
-		// 8:7 pixels at 256 wide; hi-res frames have twice as many, half as wide.
-		return f.width > 256 ? 4.0 / 7.0 : 8.0 / 7.0
+		// 8:7 pixels at 256 wide; hi-res frames have twice as many, half as
+		// wide, and interlaced frames twice as many rows, half as tall.
+		par: f32 = f.width > 256 ? 4.0 / 7.0 : 8.0 / 7.0
+		if f.height > MAX_PROGRESSIVE_SNES_LINES {
+			par *= 2
+		}
+		return par
 	case ^psx.Console:
 		// Every PlayStation video mode fills a 4:3 screen.
 		return (4.0 / 3.0) * f32(f.height) / f32(max(f.width, 1))
