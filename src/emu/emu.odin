@@ -94,6 +94,8 @@ System_Kind :: enum u8 {
 	SNES,
 	PSX,
 	GB,
+	SMS,
+	GG,
 }
 
 System_Info :: struct {
@@ -140,6 +142,22 @@ SYSTEM_INFO := [System_Kind]System_Info {
 		fps         = 59.7275,
 		sample_rate = 48000,
 		aspect      = 10.0 / 9.0,
+	},
+	.SMS = {
+		name        = "Sega Master System",
+		short_name  = "SMS",
+		extensions  = {".sms"},
+		fps         = 59.9227,
+		sample_rate = 48000,
+		aspect      = 4.0 / 3.0,
+	},
+	.GG = {
+		name        = "Sega Game Gear",
+		short_name  = "GG",
+		extensions  = {".gg"},
+		fps         = 59.9227,
+		sample_rate = 48000,
+		aspect      = 4.0 / 3.0,
 	},
 }
 
