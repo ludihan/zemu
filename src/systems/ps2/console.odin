@@ -11,6 +11,8 @@ EE_CLOCK :: 294_912_000
 Console :: struct {
 	ee:          Ee,
 	vu0:         Vu,
+	gs:          Gs,
+	gif_fifo_lo: u64,
 	ram:         []u8,
 	bios:        []u8,
 	scratch:     [SCRATCH_SIZE]u8,
@@ -42,6 +44,13 @@ create_from_elf :: proc(elf: []u8, allocator := context.allocator) -> (^Console,
 		return nil, load_err
 	}
 	c.hle_kernel = true
+	px, px_err := make([]u32, 1024 * 1024, allocator)
+	if px_err != nil {
+		destroy(c)
+		return nil, .Out_Of_Memory
+	}
+	c.gs.frame_px = px
+	gs_reset(&c.gs)
 	ee_reset(&c.ee, entry)
 	vu_reset(&c.vu0)
 	set64(&c.ee, 29, 0x01F0_0000) // stack near the top of RAM
@@ -54,8 +63,33 @@ destroy :: proc(c: ^Console) {
 	}
 	allocator := c.allocator
 	delete(c.ram, allocator)
+	delete(c.gs.frame_px, allocator)
 	delete(c.bios, allocator)
 	free(c, allocator)
+}
+
+// Instructions per video frame. The EE retires up to two per cycle at
+// 294.912 MHz; one per cycle is a reasonable average for an interpreter.
+FRAME_STEPS :: EE_CLOCK / 60
+
+run_frame :: proc(c: ^Console, input: emu.Input, audio: ^emu.Audio_Buffer) {
+	_, _ = input, audio
+	for _ in 0 ..< FRAME_STEPS {
+		ee_step(c)
+	}
+	vblank(c)
+}
+
+// Start of vertical blank: flag it in the GS and refresh the picture.
+vblank :: proc(c: ^Console) {
+	csr := &c.gs_priv[(GS_CSR - 0x1200_0000) >> 2]
+	csr^ |= 0x08 // VSINT
+	csr^ ~= 0x2000 // FIELD
+	gs_read_out(c)
+}
+
+frame :: proc(c: ^Console) -> emu.Frame {
+	return {pixels = c.gs.frame_px, width = c.gs.frame_w, height = c.gs.frame_h, pitch = c.gs.frame_w}
 }
 
 // Runs up to `n` EE instructions, stopping early when the program parks
