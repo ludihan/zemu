@@ -249,3 +249,54 @@ gsu_tests_match_reference_screens :: proc(t: ^testing.T) {
 		destroy(c)
 	}
 }
+
+// The MSU-1 registers against an in-memory data file and a missing track.
+@(test)
+msu1_registers_stream_data :: proc(t: ^testing.T) {
+	rom := make([]u8, 0x8000)
+	defer delete(rom)
+	rom[0x7FFC], rom[0x7FFD] = 0x00, 0x80 // reset vector
+	Data :: struct {
+		bytes: []u8,
+	}
+	data := Data{transmute([]u8)string("....hello, msu-1 data file")}
+	media := Msu1_Media {
+		user       = &data,
+		read_data  = proc(user: rawptr, offset: u64, dst: []u8) -> int {
+			d := (^Data)(user)
+			if offset >= u64(len(d.bytes)) {return 0}
+			return copy(dst, d.bytes[offset:])
+		},
+		open_track = proc(user: rawptr, track: u16) -> bool {return false},
+		read_track = proc(user: rawptr, offset: u64, dst: []u8) -> int {return 0},
+	}
+	c, err := create(rom, false, media)
+	if !testing.expect_value(t, err, emu.Load_Error.None) {return}
+	defer destroy(c)
+
+	id: [6]u8
+	for i in 0 ..< 6 {id[i] = bus_read(c, 0x00_2002 + u32(i))}
+	testing.expect_value(t, string(id[:]), "S-MSU1")
+	testing.expect_value(t, bus_read(c, 0x00_2000) & 0x07, MSU1_REVISION)
+
+	// seek to 4 (the write to $2003 starts it), then read sequentially
+	for b, i in ([]u8{4, 0, 0, 0}) {bus_write(c, 0x80_2000 + u32(i), b)}
+	got: [5]u8
+	for i in 0 ..< 5 {got[i] = bus_read(c, 0x80_2001)}
+	testing.expect_value(t, string(got[:]), "hello")
+	// past the end reads zero
+	for b, i in ([]u8{0, 1, 0, 0}) {bus_write(c, 0x00_2000 + u32(i), b)}
+	testing.expect_value(t, bus_read(c, 0x00_2001), 0)
+
+	// a missing track sets the error bit and refuses to play
+	bus_write(c, 0x00_2004, 7)
+	bus_write(c, 0x00_2005, 0)
+	bus_write(c, 0x00_2007, 0x01)
+	status := bus_read(c, 0x00_2000)
+	testing.expect(t, status & 0x08 != 0 && status & 0x10 == 0, "missing track: error set, not playing")
+
+	// without MSU-1 media the registers are not there
+	c2, _ := create(rom)
+	defer destroy(c2)
+	testing.expect(t, bus_read(c2, 0x00_2002) != 'S', "no MSU-1 without media")
+}

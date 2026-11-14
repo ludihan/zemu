@@ -20,6 +20,8 @@ Console :: struct {
 	spc:        Spc,
 	cart:       Cartridge,
 	gsu:        Gsu,
+	msu:        Msu1,
+	msu_media:  Msu1_Media, // not part of the state: restored after loading one
 	dma:        [8]Dma_Channel,
 	wram:       [0x20000]u8,
 	wram_addr:  u32,
@@ -61,7 +63,9 @@ Console :: struct {
 }
 
 // `pal` forces PAL timing; otherwise the header's destination code decides.
-create :: proc(rom: []u8, pal := false, allocator := context.allocator) -> (^Console, emu.Load_Error) {
+// `msu` supplies MSU-1 data and audio tracks when the game has them; the
+// console owns it (and calls its close) once created successfully.
+create :: proc(rom: []u8, pal := false, msu: Msu1_Media = {}, allocator := context.allocator) -> (^Console, emu.Load_Error) {
 	c, alloc_err := new(Console, allocator)
 	if alloc_err != nil {
 		return nil, .Out_Of_Memory
@@ -73,6 +77,8 @@ create :: proc(rom: []u8, pal := false, allocator := context.allocator) -> (^Con
 	c.spc.dsp.ram = &c.spc.ram
 	c.fingerprint = emu.fingerprint(rom)
 	c.pal = pal || c.cart.pal
+	c.msu_media = msu
+	c.msu.present = msu.read_data != nil
 	power_on(c)
 	return c, .None
 }
@@ -80,6 +86,9 @@ create :: proc(rom: []u8, pal := false, allocator := context.allocator) -> (^Con
 destroy :: proc(c: ^Console, allocator := context.allocator) {
 	if c == nil {
 		return
+	}
+	if c.msu_media.close != nil {
+		c.msu_media.close(c.msu_media.user)
 	}
 	cart_destroy(&c.cart, allocator)
 	free(c, allocator)
@@ -109,6 +118,7 @@ reset :: proc(c: ^Console) {
 	c.apu_debt = 0
 	c.line_done = false
 	gsu_reset(&c.gsu)
+	msu1_reset(&c.msu)
 	cpu_reset(c)
 }
 
@@ -260,6 +270,11 @@ run_apu :: proc(c: ^Console, master: int) {
 		for c.spc_sample_cycles >= 32 {
 			c.spc_sample_cycles -= 32
 			l, r := dsp_sample(&c.spc.dsp)
+			if c.msu.playing {
+				ml, mr := msu1_sample(c)
+				l = i16(clamp(i32(l) + ml, -32768, 32767))
+				r = i16(clamp(i32(r) + mr, -32768, 32767))
+			}
 			if c.audio != nil {
 				emu.audio_push(c.audio, l, r)
 			}
@@ -380,6 +395,8 @@ bus_read :: proc(c: ^Console, addr: u32) -> u8 {
 		v = dma_read_reg(c, a)
 	case c.cart.coproc == .Super_FX && bank & 0x40 == 0 && a >= 0x3000 && a < 0x3300:
 		v = gsu_reg_read(c, a)
+	case c.msu.present && bank & 0x40 == 0 && a >= 0x2000 && a < 0x2008:
+		v = msu1_read(c, a)
 	case:
 		if cv, ok := cart_read(&c.cart, bank, a); ok {
 			v = cv
@@ -427,6 +444,8 @@ bus_write :: proc(c: ^Console, addr: u32, v: u8) {
 		dma_write_reg(c, a, v)
 	case c.cart.coproc == .Super_FX && bank & 0x40 == 0 && a >= 0x3000 && a < 0x3300:
 		gsu_reg_write(c, a, v)
+	case c.msu.present && bank & 0x40 == 0 && a >= 0x2000 && a < 0x2008:
+		msu1_write(c, a, v)
 	case:
 		cart_write(&c.cart, bank, a, v)
 	}
@@ -520,9 +539,10 @@ load_state :: proc(c: ^Console, data: []u8) -> bool {
 	if !emu.state_valid(data, .SNES, c.fingerprint, size_of(Console), {c.cart.sram}) {
 		return false
 	}
-	rom, sram, audio, fp := c.cart.rom, c.cart.sram, c.audio, c.fingerprint
+	rom, sram, audio, fp, media := c.cart.rom, c.cart.sram, c.audio, c.fingerprint, c.msu_media
 	emu.state_read(data, c, size_of(Console), {c.cart.sram})
-	c.cart.rom, c.cart.sram, c.audio, c.fingerprint = rom, sram, audio, fp
+	c.cart.rom, c.cart.sram, c.audio, c.fingerprint, c.msu_media = rom, sram, audio, fp, media
+	c.msu.data_len, c.msu.track_len = 0, 0 // the caches may hold another moment's data
 	c.spc.dsp.ram = &c.spc.ram // interior pointer must point at this console
 	return true
 }
