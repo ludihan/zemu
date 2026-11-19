@@ -23,6 +23,7 @@ when IS_ANDROID {
 } else when !IS_WEB {
 	main :: proc() {
 		app_ctx = context
-		os.exit(int(sdl.EnterAppMainCallbacks(0, nil, app_init, app_iterate, app_event, app_quit)))
+		args := runtime.args__.([]cstring)
+		os.exit(int(sdl.EnterAppMainCallbacks(c.int(len(args)), raw_data(args), app_init, app_iterate, app_event, app_quit)))
 	}
 }
