@@ -115,6 +115,8 @@ debug_screenshot :: proc() -> bool {
 		if m := sdl.getenv("ZEMU_DEBUG_MENU"); m != nil do menu_open(int(sdl.atoi(m)))
 		ui.mouse_seen = true
 		ui.mx, ui.my = ui.cv.w / 2 + 20, ui.cv.h / 2 + 30
+		if x := sdl.getenv("ZEMU_DEBUG_MOUSE_X"); x != nil do ui.mx = int(sdl.atoi(x))
+		if y := sdl.getenv("ZEMU_DEBUG_MOUSE_Y"); y != nil do ui.my = int(sdl.atoi(y))
 	}
 	want := 30
 	if n := sdl.getenv("ZEMU_SCREENSHOT_FRAMES"); n != nil do want = int(sdl.atoi(n))

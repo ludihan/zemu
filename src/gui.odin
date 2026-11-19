@@ -400,24 +400,47 @@ draw_snow :: proc(cv: ^Canvas) {
 	}
 }
 
+// '#' outline, '*' highlight edge, '+' body (shaded top to bottom).
 CURSOR := []string{
 	"#",
 	"##",
-	"#+#",
-	"#++#",
-	"#+++#",
-	"#++++#",
-	"#+++++#",
-	"#++++++#",
-	"#+++####",
-	"#+#+#",
-	"##.#+#",
-	"#...#+#",
-	".....##",
+	"#*#",
+	"#*+#",
+	"#*++#",
+	"#*+++#",
+	"#*++++#",
+	"#*+++++#",
+	"#*++++++#",
+	"#*+++++++#",
+	"#*++++#####",
+	"#*+#*+#",
+	"#*##*++#",
+	"##  #*+#",
+	"#    #*+#",
+	"     #*+#",
+	"      ##",
 }
 
 draw_cursor :: proc(cv: ^Canvas, x, y: int) {
-	draw_sprite(cv, x, y, CURSOR, rgb(0, 0, 0), rgb(220, 230, 255))
+	n := len(CURSOR)
+	// Soft drop shadow.
+	for row, sy in CURSOR {
+		for sx in 0 ..< len(row) {
+			if row[sx] != ' ' do put_pixel(cv, x + sx + 2, y + sy + 2, rgba(0, 0, 0, 90))
+		}
+	}
+	top := rgb(255, 255, 255)
+	bottom := mix(theme.title_top, rgb(255, 255, 255), 0.25)
+	for row, sy in CURSOR {
+		body := mix(top, bottom, f32(sy) / f32(n - 1))
+		for sx in 0 ..< len(row) {
+			switch row[sx] {
+			case '#': put_pixel(cv, x + sx, y + sy, rgb(10, 10, 30))
+			case '*': put_pixel(cv, x + sx, y + sy, rgb(255, 255, 255))
+			case '+': put_pixel(cv, x + sx, y + sy, body)
+			}
+		}
+	}
 }
 
 // --- In-game overlay: messages and FPS ---------------------------------------
