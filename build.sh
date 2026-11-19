@@ -137,7 +137,13 @@ case "$target" in
 		odin build src -out:build/zemu -debug
 		;;
 	release)
-		odin build src -out:build/zemu -o:speed -no-bounds-check
+		# Look for a bundled SDL3 next to the executable (Odin already adds
+		# $ORIGIN to the runpath on Linux).
+		extra=()
+		if [ "$(uname -s)" = Darwin ]; then
+			extra=(-extra-linker-flags:"-Wl,-rpath,@executable_path -L$(brew --prefix 2>/dev/null || echo /usr/local)/lib")
+		fi
+		odin build src -out:build/zemu -o:speed -no-bounds-check "${extra[@]}"
 		;;
 	run)
 		odin build src -out:build/zemu -debug && ./build/zemu "$@"

@@ -1,0 +1,186 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  SDL_VERSION: "3.4.18"
+  ANDROID_NDK_VERSION: "30.0.16248370"
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: laytan/setup-odin@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release: latest
+      - name: Build SDL3
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
+            libxfixes-dev libxi-dev libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev \
+            wayland-protocols libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev libdrm-dev libgbm-dev \
+            libasound2-dev libpulse-dev libpipewire-0.3-dev libdbus-1-dev libudev-dev libdecor-0-dev
+          curl -fsSL "https://github.com/libsdl-org/SDL/releases/download/release-$SDL_VERSION/SDL3-$SDL_VERSION.tar.gz" | tar -xz
+          cmake -S "SDL3-$SDL_VERSION" -B sdl-build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSDL_TEST_LIBRARY=OFF
+          cmake --build sdl-build
+          sudo cmake --install sdl-build
+          sudo ldconfig
+      - run: ./build.sh release
+      - name: Package
+        run: |
+          mkdir -p dist/zemu
+          cp build/zemu README.md dist/zemu/
+          cp -L /usr/local/lib/libSDL3.so.0 dist/zemu/
+          tar -C dist -czf zemu-linux-x86_64.tar.gz zemu
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zemu-linux-x86_64
+          path: zemu-linux-x86_64.tar.gz
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+      - uses: laytan/setup-odin@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release: latest
+      - name: Get SDL3
+        shell: pwsh
+        run: |
+          Invoke-WebRequest "https://github.com/libsdl-org/SDL/releases/download/release-$env:SDL_VERSION/SDL3-devel-$env:SDL_VERSION-VC.zip" -OutFile sdl.zip
+          Expand-Archive sdl.zip -DestinationPath sdl
+          # vendor:sdl3 links "SDL3.lib" from its own folder.
+          $odin = (odin root).Trim()
+          Copy-Item "sdl/SDL3-$env:SDL_VERSION/lib/x64/SDL3.lib" (Join-Path $odin "vendor/sdl3/")
+      - name: Build
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build | Out-Null
+          odin build src -out:build/zemu.exe -o:speed -no-bounds-check -subsystem:windows
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/zemu | Out-Null
+          Copy-Item build/zemu.exe, README.md dist/zemu/
+          Copy-Item "sdl/SDL3-$env:SDL_VERSION/lib/x64/SDL3.dll" dist/zemu/
+          Compress-Archive dist/zemu zemu-windows-x86_64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zemu-windows-x86_64
+          path: zemu-windows-x86_64.zip
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: laytan/setup-odin@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release: latest
+      - run: brew install sdl3
+      - run: ./build.sh release
+      - name: Package
+        run: |
+          mkdir -p dist/zemu
+          cp build/zemu README.md dist/zemu/
+          lib="$(otool -L build/zemu | awk '/libSDL3/ {print $1}')"
+          cp "$(brew --prefix sdl3)/lib/libSDL3.0.dylib" dist/zemu/
+          install_name_tool -change "$lib" @executable_path/libSDL3.0.dylib dist/zemu/zemu
+          codesign --force -s - dist/zemu/libSDL3.0.dylib dist/zemu/zemu
+          tar -C dist -czf zemu-macos-arm64.tar.gz zemu
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zemu-macos-arm64
+          path: zemu-macos-arm64.tar.gz
+
+  android:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: laytan/setup-odin@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release: latest
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Android SDK and NDK
+        run: |
+          sudo apt-get update && sudo apt-get install -y ninja-build
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;$ANDROID_NDK_VERSION" "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+      - name: Build
+        env:
+          ZEMU_ANDROID_ABIS: "arm64-v8a x86_64"
+        run: ./build.sh android
+      - run: mv build/zemu.apk zemu-android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zemu-android
+          path: zemu-android.apk
+
+  web:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: laytan/setup-odin@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release: latest
+      - uses: mymindstorm/setup-emsdk@v14
+      - run: sudo apt-get update && sudo apt-get install -y ninja-build zip
+      - run: ./build.sh web
+      - name: Build web cores
+        run: scripts/build_web_cores.sh build/web/site/cores
+      - run: cd build/web/site && zip -qr ../../../zemu-web.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zemu-web
+          path: zemu-web.zip
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          path: build/web/site
+
+  # The web build at https://<user>.github.io/<repo>/ (enable Pages with
+  # "GitHub Actions" as the source in the repository settings).
+  pages:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: web
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows, macos, android, web]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
