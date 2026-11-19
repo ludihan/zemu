@@ -36,7 +36,7 @@ window_frame :: proc(cv: ^Canvas, title: string, r: Rect) -> (close: bool) {
 	hline(cv, tb.x, tb.y + tb.h, tb.w, theme.dark)
 	draw_text(cv, tb.x + 3, tb.y + 2, title, theme.text)
 
-	cb := Rect{tb.x + tb.w - 9, tb.y + 1, 8, 7}
+	cb := Rect{tb.x + tb.w - 10, tb.y + 1, 9, 7} // 5x5 glyph centred: 2px each side, 1px top/bottom
 	hover := mouse_in(cb)
 	fill_rect(cv, cb, theme.button_hi if hover else theme.button)
 	bevel(cv, cb, theme.light, theme.dark, held(cb))
@@ -64,7 +64,8 @@ button :: proc(cv: ^Canvas, r: Rect, text: string, enabled := true) -> bool {
 	rect_outline(cv, rect_inset(r, -1), theme.border)
 	bevel(cv, r, theme.light, theme.dark, down)
 	t := text if len(text) == 1 else fit_text(text, r.w - 4)
-	tx := r.x + (r.w - text_width(t)) / 2 + (1 if down else 0)
+	// Centre on the ink: text_width counts the gap after the last glyph.
+	tx := r.x + (r.w - (text_width(t) - 1)) / 2 + (1 if down else 0)
 	ty := r.y + (r.h - GLYPH_H) / 2 + (1 if down else 0)
 	draw_text(cv, tx, ty, t, theme.text if enabled else theme.text_dim)
 	return enabled && clicked(r)
