@@ -296,7 +296,7 @@ desktop_frame :: proc() {
 		draw_background(cv)
 	}
 	if settings.snow do draw_snow(cv)
-	if !core.game_loaded do draw_logo(cv)
+	if !core.game_loaded do draw_home(cv)
 
 	desktop_keyboard()
 
@@ -352,27 +352,8 @@ draw_background :: proc(cv: ^Canvas) {
 	vgradient(cv, {0, 0, cv.w, cv.h}, shade(theme.base, 0.3), rgb(0, 0, 8))
 }
 
-draw_logo :: proc(cv: ^Canvas) {
-	LOGO :: "ZEMU"
-	s := max(3, min(cv.w / 50, cv.h / 36))
-	w := (len(LOGO) * CHAR_W - 1) * s
-	x := (cv.w - w) / 2
-	y := cv.h / 2 - 3 * s
-	// Drop shadow, dark outline, then a vertical gradient face.
-	draw_text_plain(cv, x + s, y + s, LOGO, rgba(0, 0, 0, 160), s)
-	for dy in -1 ..= 1 do for dx in -1 ..= 1 {
-		if dx != 0 || dy != 0 do draw_text_plain(cv, x + dx, y + dy, LOGO, theme.dark, s)
-	}
-	top := rgb(255, 255, 255)
-	bot := theme.title_top
-	for row in 0 ..< GLYPH_H * s {
-		set_clip(cv, {0, y + row, cv.w, 1})
-		draw_text_plain(cv, x, y, LOGO, mix(top, bot, f32(row) / f32(GLYPH_H * s)), s)
-	}
-	reset_clip(cv)
-
-	sub := "LIBRETRO FRONTEND"
-	draw_text(cv, (cv.w - text_width(sub)) / 2, y + GLYPH_H * s + 6, sub, theme.text)
+// Home screen extras: a hint and the version, over the snow.
+draw_home :: proc(cv: ^Canvas) {
 	ver := fmt.tprintf("V%s", APP_VERSION)
 	draw_text(cv, cv.w - text_width(ver) - 4, cv.h - LINE_H - 2, ver, theme.text_dim)
 	hint := "NO CORES INSTALLED - SEE CORES MENU" if len(installed_cores) == 0 else "GAME - LOAD TO START"
