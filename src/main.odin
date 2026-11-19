@@ -167,7 +167,11 @@ app_event :: proc "c" (appstate: rawptr, event: ^sdl.Event) -> sdl.AppResult {
 		input_gamepad_removed(event.gdevice.which)
 	case .KEY_DOWN:
 		if !app.gui_open || !(event.key.scancode == .ESCAPE || event.key.scancode == .AC_BACK) {
+			was_open := app.gui_open
 			hotkey(event.key.scancode, event.key.mod, event.key.repeat)
+			// The key just opened the GUI: don't also hand it to the GUI,
+			// which would read it as "back" and close it again.
+			if app.gui_open != was_open do return .CONTINUE
 		}
 	case .KEY_UP:
 		if event.key.scancode == .GRAVE do timing.fast_forward = timing.ff_toggle
