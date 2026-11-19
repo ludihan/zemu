@@ -581,22 +581,6 @@ draw_menubar :: proc(cv: ^Canvas) {
 		draw_text(cv, r.x + 3, 2, name, theme.text)
 	}
 
-	// Window buttons on the right, like ZSNES' minimize and exit boxes.
-	when !IS_WEB && !IS_MOBILE {
-		xr := Rect{cv.w - 10, 1, 9, 8}
-		mr := Rect{cv.w - 20, 1, 9, 8}
-		for r, i in ([]Rect{mr, xr}) {
-			hover := rect_contains(r, ui.mx, ui.my) && !(ui.menu >= 0)
-			fill_rect(cv, r, theme.button_hi if hover else theme.button)
-			bevel(cv, r, theme.light, theme.dark, hover && ui.mouse_down)
-			draw_char(cv, r.x + 2, r.y + 1, 'X' if i == 1 else '_', theme.text)
-			if hover && ui.mouse_released && rect_contains(r, ui.press_x, ui.press_y) {
-				if i == 1 do app.running = false
-				else do _ = sdl.MinimizeWindow(app.window)
-			}
-		}
-	}
-
 	// Clicking outside an open menu closes it.
 	if ui.menu >= 0 && ui.mouse_pressed && !mouse_on_bar {
 		box := menu_box_rect(ui.menu, menu_items(ui.menu))
