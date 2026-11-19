@@ -119,6 +119,10 @@ delete_file :: proc(path: string) -> bool {
 	return sdl.RemovePath(tcstr(path))
 }
 
+rename_file :: proc(from, to: string) -> bool {
+	return sdl.RenamePath(tcstr(from), tcstr(to))
+}
+
 Dir_Entry :: struct {
 	name:   string,
 	is_dir: bool,

@@ -227,7 +227,13 @@ load_dialog_launch :: proc() {
 	if !ok do return
 	cands := load_dialog_candidates(path)
 	if len(cands) == 0 {
-		message_box("NO CORE", "NO INSTALLED CORE OPENS THIS FILE. GET ONE FROM THE CORES MENU.")
+		// Take the user straight to cores that can open it.
+		if downloads_supported() {
+			set_last_dir(load_dlg.dir)
+			cores_dialog_find(extension(path))
+		} else {
+			message_box("NO CORE", "NO INSTALLED CORE OPENS THIS FILE.")
+		}
 		return
 	}
 	pick := cands[clamp(load_dlg.core_pick, 0, len(cands) - 1)]
@@ -302,7 +308,7 @@ load_dialog :: proc(cv: ^Canvas, b: Rect) {
 		dlg.core_pick = clamp(dlg.core_pick, 0, len(cands) - 1)
 		core_label = installed_cores[cands[dlg.core_pick]].name
 	} else if has_file {
-		core_label = "NO CORE FOR THIS FILE"
+		core_label = "NONE - LOAD TO FIND ONE"
 	}
 	label(cv, b.x, y + 2, "CORE:")
 	step := stepper(cv, {b.x + 32, y, b.w - 32 - 50, 10}, core_label, len(cands) > 1)

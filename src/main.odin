@@ -74,6 +74,7 @@ app_iterate :: proc "c" (appstate: rawptr) -> sdl.AppResult {
 	context = app_ctx
 	defer free_all(context.temp_allocator)
 	if !app.running do return .SUCCESS
+	downloader_update()
 
 	if emulation_active() {
 		n := timing_frames_due()
@@ -120,6 +121,20 @@ debug_screenshot :: proc() -> bool {
 	}
 	want := 30
 	if n := sdl.getenv("ZEMU_SCREENSHOT_FRAMES"); n != nil do want = int(sdl.atoi(n))
+	if frame == 3 {
+		if s := sdl.getenv("ZEMU_DEBUG_FIND"); s != nil do cores_dialog_find(string(s))
+	}
+	// ZEMU_DEBUG_GET=<core id> installs a core once the list is in.
+	@(static) got: bool
+	if id := sdl.getenv("ZEMU_DEBUG_GET"); id != nil && !got && dl.state == .Ready {
+		got = true
+		for rc, i in dl.remote do if rc.id == string(id) do download_core(i)
+	}
+	// ZEMU_DEBUG_WAIT_DOWNLOADS=1 holds the screenshot until downloads finish.
+	if sdl.getenv("ZEMU_DEBUG_WAIT_DOWNLOADS") != nil && (dl.state == .Loading || download_busy() || (sdl.getenv("ZEMU_DEBUG_GET") != nil && !got)) {
+		sdl.Delay(10)
+		return false
+	}
 	if frame < want do return false
 	if surf := sdl.RenderReadPixels(app.renderer, nil); surf != nil {
 		_ = sdl.SaveBMP(surf, path)

@@ -47,7 +47,7 @@ cores_scan :: proc() {
 			id   = strings.clone(core_id_from_file(d.name)),
 		}
 		if info, ok := core_info_read(e.id); ok {
-			e.name       = strings.clone(info.display_name)
+			e.name       = short_core_name(info.display_name, context.allocator)
 			e.system     = strings.clone(info.system)
 			e.extensions = strings.clone(info.extensions)
 			e.no_game    = info.no_game
@@ -68,6 +68,17 @@ Core_Info :: struct {
 	manufacturer: string,
 	extensions:   string,
 	no_game:      bool,
+}
+
+// "Nintendo - SNES / SFC (Snes9x 2010)" -> "Snes9x 2010 - SNES / SFC", so the
+// part that tells cores apart comes first and survives truncation.
+short_core_name :: proc(display: string, allocator := context.temp_allocator) -> string {
+	open := strings.last_index_byte(display, '(')
+	if open <= 0 || !strings.has_suffix(display, ")") do return strings.clone(display, allocator)
+	inner := display[open + 1:len(display) - 1]
+	system := strings.trim_space(display[:open])
+	if dash := strings.index(system, " - "); dash >= 0 do system = system[dash + 3:]
+	return strings.concatenate({inner, " - ", system}, allocator)
 }
 
 // Parses a libretro .info file (temp allocated strings).
