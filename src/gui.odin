@@ -58,6 +58,7 @@ UI :: struct {
 	mouse_pressed:   bool,
 	mouse_released:  bool,
 	press_x, press_y: int,
+	press_ns:        u64,
 	wheel:           int,
 	mouse_seen:      bool,
 	keys:            [dynamic]sdl.Keycode,
@@ -168,6 +169,7 @@ gui_event :: proc(e: ^sdl.Event) {
 			ui.mouse_down = true
 			ui.mouse_pressed = true
 			ui.press_x, ui.press_y = ui.mx, ui.my
+			ui.press_ns = sdl.GetTicksNS()
 		} else if e.button.button == sdl.BUTTON_RIGHT {
 			// Right click backs out, like ZSNES.
 			append(&ui.keys, sdl.K_ESCAPE)

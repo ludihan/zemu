@@ -144,6 +144,46 @@ vgradient :: proc(cv: ^Canvas, r: Rect, top, bottom: Color) {
 	}
 }
 
+fill_circle :: proc(cv: ^Canvas, cx, cy, r: int, c: Color) {
+	for dy in -r ..= r {
+		dx := int(f32(r) * sqrt_f32(1 - f32(dy * dy) / f32(max(1, r * r))) + 0.5)
+		hline(cv, cx - dx, cy + dy, 2 * dx + 1, c)
+	}
+}
+
+circle_outline :: proc(cv: ^Canvas, cx, cy, r: int, c: Color) {
+	// Midpoint circle.
+	x, y := r, 0
+	err := 1 - r
+	for x >= y {
+		pts := [8][2]int{{x, y}, {y, x}, {-y, x}, {-x, y}, {-x, -y}, {-y, -x}, {y, -x}, {x, -y}}
+		for p in pts do put_pixel(cv, cx + p[0], cy + p[1], c)
+		y += 1
+		if err < 0 {
+			err += 2 * y + 1
+		} else {
+			x -= 1
+			err += 2 * (y - x) + 1
+		}
+	}
+}
+
+// Rectangle with the corners cut by one pixel: buttons on the touch UI.
+fill_rounded :: proc(cv: ^Canvas, r: Rect, c: Color) {
+	fill_rect(cv, {r.x + 1, r.y, r.w - 2, r.h}, c)
+	vline(cv, r.x, r.y + 1, r.h - 2, c)
+	vline(cv, r.x + r.w - 1, r.y + 1, r.h - 2, c)
+}
+
+@(private="file")
+sqrt_f32 :: proc(x: f32) -> f32 {
+	if x <= 0 do return 0
+	// Newton iterations are plenty for pixel circles.
+	g := x
+	for _ in 0 ..< 8 do g = 0.5 * (g + x / g)
+	return g
+}
+
 // --- Pixel font ---------------------------------------------------------------
 // 5x5 upper-case glyphs, 6 pixel advance, drawn with a 1 pixel drop shadow like
 // the ZSNES GUI. Lower case is drawn as upper case.

@@ -3,6 +3,7 @@ package zemu
 import "base:runtime"
 import "core:c"
 import "core:fmt"
+import "core:strings"
 import sdl "vendor:sdl3"
 
 APP_NAME    :: "ZEMU"
@@ -32,7 +33,17 @@ app_init :: proc "c" (appstate: ^rawptr, argc: c.int, argv: [^]cstring) -> sdl.A
 
 	flags: sdl.WindowFlags = {.RESIZABLE, .HIGH_PIXEL_DENSITY}
 	if settings.fullscreen do flags += {.FULLSCREEN}
-	if !sdl.CreateWindowAndRenderer(APP_NAME, 256 * 3, 224 * 3, flags, &app.window, &app.renderer) {
+	win_w, win_h: c.int = 256 * 3, 224 * 3
+	// ZEMU_WINDOW=WxH, handy for trying phone shapes with the touch UI.
+	if ws := sdl.getenv("ZEMU_WINDOW"); ws != nil {
+		s := string(ws)
+		if x := strings.index_byte(s, 'x'); x > 0 {
+			win_w = c.int(sdl.atoi(tcstr(s[:x])))
+			win_h = c.int(sdl.atoi(tcstr(s[x + 1:])))
+		}
+	}
+	if sdl.getenv("ZEMU_TOUCH") != nil do settings.ui_override = .Touch
+	if !sdl.CreateWindowAndRenderer(APP_NAME, win_w, win_h, flags, &app.window, &app.renderer) {
 		fmt.eprintln("CreateWindowAndRenderer failed:", sdl.GetError())
 		return .FAILURE
 	}
@@ -114,6 +125,7 @@ debug_screenshot :: proc() -> bool {
 		// ZEMU_DEBUG_DIALOG=<Dialog index> / ZEMU_DEBUG_MENU=<menu index>
 		if d := sdl.getenv("ZEMU_DEBUG_DIALOG"); d != nil do dialog_open(Dialog(sdl.atoi(d)))
 		if m := sdl.getenv("ZEMU_DEBUG_MENU"); m != nil do menu_open(int(sdl.atoi(m)))
+		if sdl.getenv("ZEMU_DEBUG_PAUSE") != nil && core.game_loaded && !app.gui_open do gui_toggle()
 		ui.mouse_seen = true
 		ui.mx, ui.my = ui.cv.w / 2 + 20, ui.cv.h / 2 + 30
 		if x := sdl.getenv("ZEMU_DEBUG_MOUSE_X"); x != nil do ui.mx = int(sdl.atoi(x))
