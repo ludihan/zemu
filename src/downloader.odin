@@ -79,7 +79,8 @@ buildbot_base_url :: proc() -> string {
 
 // Fetch the core list and the info files.
 catalog_refresh :: proc() {
-	if dl.state == .Loading do return
+	// Downloads hold indices into dl.remote, which a refresh rebuilds.
+	if dl.state == .Loading || download_busy() do return
 	base := buildbot_base_url()
 	if base == "" {
 		dl.state = .Failed

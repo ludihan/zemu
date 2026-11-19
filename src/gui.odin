@@ -316,7 +316,9 @@ desktop_frame :: proc() {
 // Keys that work anywhere in the desktop GUI.
 desktop_keyboard :: proc() {
 	if consume_key(sdl.K_ESCAPE) {
-		if ui.menu >= 0 {
+		if ui.dialog == .Input && input_capture >= 0 {
+			input_capture = -1 // cancel "PRESS KEY", keep the window
+		} else if ui.menu >= 0 {
 			ui.menu = -1
 		} else if ui.dialog != .None {
 			dialog_close()
@@ -681,8 +683,8 @@ launch_game :: proc(core_path, game_path: string) -> bool {
 	ui.dialog = .None
 	ui.menu = -1
 	app.gui_open = false
-	app.paused = false
 	audio_pause(false)
+	gui_update_cursor()
 	return true
 }
 

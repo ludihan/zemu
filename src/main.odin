@@ -97,7 +97,6 @@ app_iterate :: proc "c" (appstate: rawptr) -> sdl.AppResult {
 		audio_update_rate()
 		if core.shutdown_requested {
 			core_unload_game()
-			app.gui_open = true
 		}
 	} else {
 		timing_reset()
@@ -107,7 +106,10 @@ app_iterate :: proc "c" (appstate: rawptr) -> sdl.AppResult {
 	_ = sdl.RenderClear(app.renderer)
 	w, h: c.int
 	_ = sdl.GetRenderOutputSize(app.renderer, &w, &h)
-	if !core.game_loaded do app.gui_open = true
+	if !core.game_loaded && !app.gui_open {
+		app.gui_open = true
+		gui_update_cursor()
+	}
 	video_draw(game_area(f32(w), f32(h)), app.gui_open)
 	gui_frame()
 	if debug_screenshot() do return .SUCCESS
@@ -201,6 +203,9 @@ game_area :: proc(w, h: f32) -> sdl.FRect {
 
 hotkey :: proc(sc: sdl.Scancode, mod: sdl.Keymod, repeat: bool) {
 	if repeat do return
+	// With the GUI up, letters go to text fields and lists, so only the
+	// window keys apply.
+	if app.gui_open && !(sc == .F11 || (sc == .RETURN && (.LALT in mod || .RALT in mod))) do return
 	#partial switch sc {
 	case .ESCAPE, .AC_BACK:
 		if core.game_loaded do gui_toggle()

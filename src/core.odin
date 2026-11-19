@@ -106,6 +106,7 @@ core_load :: proc(path: string) -> bool {
 core_unload :: proc() {
 	if !core_loaded do return
 	if core.game_loaded do core_unload_game()
+	core_options_save()
 	core.api.deinit()
 	core_library_close(core.lib)
 
@@ -177,6 +178,8 @@ core_start_no_game :: proc() -> bool {
 @(private="file")
 core_after_game_loaded :: proc() {
 	core.game_loaded = true
+	core.shutdown_requested = false
+	app.paused = false
 	core.api.get_system_av_info(&core.av_info)
 	for port in 0 ..< MAX_PORTS {
 		core.api.set_controller_port_device(c.uint(port), c.uint(retro.Device.JOYPAD))
@@ -198,6 +201,10 @@ core_unload_game :: proc() {
 	core.game_data = nil; core.game_path = ""; core.game_path_c = nil
 	core.game_loaded = false
 	core.frame_time_cb = {}
+	core.shutdown_requested = false
+	app.paused = false
+	video_reset()
+	cheats_clear()
 }
 
 core_reset :: proc() {

@@ -75,7 +75,7 @@ download_tab :: proc(cv: ^Canvas, b: Rect) {
 
 	label(cv, b.x, b.y + 2, "FIND")
 	_ = text_field(cv, {b.x + 28, b.y, b.w - 28 - 56, 11}, &cores_dlg.search, 32)
-	if button(cv, {b.x + b.w - 50, b.y, 50, 11}, "REFRESH", dl.state != .Loading) do catalog_refresh()
+	if button(cv, {b.x + b.w - 50, b.y, 50, 11}, "REFRESH", dl.state != .Loading && !download_busy()) do catalog_refresh()
 
 	query := string(cores_dlg.search[:])
 	rows := make([dynamic]int, context.temp_allocator)

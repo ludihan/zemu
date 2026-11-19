@@ -879,6 +879,7 @@ touch_sheet :: proc(cv: ^Canvas) {
 			if core_load(e.path) && core_start_no_game() {
 				app.gui_open = false
 				audio_pause(false)
+				gui_update_cursor()
 			}
 		case 1:
 			touch.sheet = .None

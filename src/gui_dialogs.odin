@@ -526,6 +526,15 @@ cheat_code_buf: [dynamic]u8
 cheat_desc_buf: [dynamic]u8
 cheat_list: List_State
 
+// Cheats belong to the game they were entered for.
+cheats_clear :: proc() {
+	for ch in cheats {
+		delete(ch.code); delete(ch.desc)
+	}
+	clear(&cheats)
+	cheat_list = {}
+}
+
 cheats_apply :: proc() {
 	if !core.game_loaded do return
 	core.api.cheat_reset()
