@@ -161,8 +161,12 @@ load_dialog_open :: proc() {
 	cores_scan()
 	dir := settings.last_dir
 	if dir == "" || !dir_exists(dir) {
-		home := sdl.GetUserFolder(.HOME)
-		dir = string(home) if home != nil else paths.roms
+		when IS_WEB || IS_MOBILE {
+			dir = paths.roms // imported games live here
+		} else {
+			home := sdl.GetUserFolder(.HOME)
+			dir = string(home) if home != nil else paths.roms
+		}
 	}
 	load_dialog_chdir(dir)
 }

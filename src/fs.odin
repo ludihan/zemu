@@ -112,15 +112,21 @@ read_file :: proc(path: string, allocator := context.allocator) -> (data: []byte
 }
 
 write_file :: proc(path: string, data: []byte) -> bool {
-	return sdl.SaveFile(tcstr(path), raw_data(data), uint(len(data)))
+	ok := sdl.SaveFile(tcstr(path), raw_data(data), uint(len(data)))
+	when IS_WEB do web_fs_dirty() // persist to IndexedDB soon
+	return ok
 }
 
 delete_file :: proc(path: string) -> bool {
-	return sdl.RemovePath(tcstr(path))
+	ok := sdl.RemovePath(tcstr(path))
+	when IS_WEB do if ok do web_fs_dirty()
+	return ok
 }
 
 rename_file :: proc(from, to: string) -> bool {
-	return sdl.RenamePath(tcstr(from), tcstr(to))
+	ok := sdl.RenamePath(tcstr(from), tcstr(to))
+	when IS_WEB do web_fs_dirty()
+	return ok
 }
 
 Dir_Entry :: struct {

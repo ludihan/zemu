@@ -102,6 +102,36 @@ build_android() {
 	echo "built build/zemu.apk"
 }
 
+build_web() {
+	local out=build/web
+	fetch_sdl
+	mkdir -p "$out/site"
+
+	# SDL3 as a static library. Everything is position independent because
+	# cores are loaded at runtime as Emscripten side modules.
+	local sdl_build="$out/sdl"
+	if [ ! -f "$sdl_build/libSDL3.a" ]; then
+		emcmake cmake -S "$SDL_DIR" -B "$sdl_build" -G Ninja \
+			-DCMAKE_BUILD_TYPE=Release -DSDL_SHARED=OFF -DSDL_STATIC=ON \
+			-DSDL_TEST_LIBRARY=OFF -DSDL_EXAMPLES=OFF \
+			-DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_C_FLAGS="-fPIC"
+		cmake --build "$sdl_build"
+	fi
+
+	odin build src -target:js_wasm32 -build-mode:obj -no-entry-point -reloc-mode:pic \
+		-o:speed -out:"$out/zemu.wasm.o"
+
+	emcc -O2 -fPIC web/main.c "$out/zemu.wasm.o" "$sdl_build/libSDL3.a" \
+		-o "$out/site/index.html" \
+		--shell-file web/shell.html --js-library web/zemu.js --pre-js web/pre.js \
+		-sMAIN_MODULE=1 -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=64MB -sSTACK_SIZE=1MB \
+		-sFORCE_FILESYSTEM=1 -sEXPORTED_RUNTIME_METHODS=FS,UTF8ToString -lidbfs.js \
+		-sWASM_BIGINT=1 -sERROR_ON_UNDEFINED_SYMBOLS=1 \
+		-Wl,--allow-multiple-definition # Odin's runtime and libc both define memmove & co.
+	cp android/res/mipmap-xxxhdpi/ic_launcher.png "$out/site/icon.png"
+	echo "built $out/site (serve it over http, e.g. python3 -m http.server -d $out/site)"
+}
+
 case "$target" in
 	desktop)
 		odin build src -out:build/zemu -debug
@@ -114,6 +144,9 @@ case "$target" in
 		;;
 	android)
 		build_android
+		;;
+	web)
+		build_web
 		;;
 	*)
 		echo "unknown target: $target" >&2; exit 1

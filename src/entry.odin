@@ -2,10 +2,12 @@ package zemu
 
 // Platform entry points. Every platform ends up in SDL's main-callback loop
 // (app_init / app_iterate / app_event / app_quit in main.odin).
+//   desktop: entry_desktop.odin
+//   web:     entry_web.odin
+//   Android: here, SDL_main
 
 import "base:runtime"
 import "core:c"
-import "core:os"
 import sdl "vendor:sdl3"
 
 IS_WEB     :: ODIN_ARCH == .wasm32 || ODIN_ARCH == .wasm64p32
@@ -19,11 +21,5 @@ when IS_ANDROID {
 		context = runtime.default_context()
 		app_ctx = context
 		return sdl.EnterAppMainCallbacks(argc, argv, app_init, app_iterate, app_event, app_quit)
-	}
-} else when !IS_WEB {
-	main :: proc() {
-		app_ctx = context
-		args := runtime.args__.([]cstring)
-		os.exit(int(sdl.EnterAppMainCallbacks(c.int(len(args)), raw_data(args), app_init, app_iterate, app_event, app_quit)))
 	}
 }

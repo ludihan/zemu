@@ -89,7 +89,9 @@ catalog_refresh :: proc() {
 	http_free(dl.index_req)
 	http_free(dl.info_req)
 	dl.index_req = http_get(strings.concatenate({base, ".index-extended"}, context.temp_allocator), join_path(paths.info, "index.txt", context.temp_allocator))
-	dl.info_req = http_get(CORE_INFO_URL, join_path(paths.info, "info.zip", context.temp_allocator))
+	// The web build can't read the buildbot (no CORS), so the site mirrors info.zip.
+	info_url := strings.concatenate({base, "info.zip"}, context.temp_allocator) if IS_WEB else CORE_INFO_URL
+	dl.info_req = http_get(info_url, join_path(paths.info, "info.zip", context.temp_allocator))
 }
 
 // Called every frame.

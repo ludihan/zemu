@@ -86,6 +86,7 @@ app_iterate :: proc "c" (appstate: rawptr) -> sdl.AppResult {
 	defer free_all(context.temp_allocator)
 	if !app.running do return .SUCCESS
 	downloader_update()
+	when IS_WEB do web_update()
 
 	if emulation_active() {
 		n := timing_frames_due()
