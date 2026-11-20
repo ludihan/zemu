@@ -72,6 +72,7 @@ Touch :: struct {
 	imported:     [dynamic]string, // files picked in the system dialog, to copy in
 	menu_was_down: bool,
 	confirm:       bool, // the open sheet's destructive item was tapped once
+	sheet_new:     bool, // the sheet opened this frame
 }
 
 touch: Touch
@@ -182,6 +183,11 @@ touch_frame :: proc() {
 		touch_page(cv, in_game)
 		ui.input_blocked = false
 	}
+	// A sheet opened by this frame's tap mustn't read that same tap as a
+	// tap outside it and close straight away.
+	@(static) last_sheet: Touch_Sheet
+	touch.sheet_new = touch.sheet != last_sheet
+	last_sheet = touch.sheet
 	if touch.sheet != .None {
 		touch_sheet(cv)
 		if back {
@@ -792,7 +798,7 @@ action_sheet :: proc(cv: ^Canvas, title: string, items: []Sheet_Item) -> int {
 		if t_button(cv, ir, it.label, it.enabled) do picked = i
 	}
 	// Tapping outside closes it.
-	if ui.mouse_released && !rect_contains(r, ui.mx, ui.my) && !rect_contains(r, ui.press_x, ui.press_y) && touch.sheet != .Game_Menu {
+	if ui.mouse_released && !touch.sheet_new && !rect_contains(r, ui.mx, ui.my) && !rect_contains(r, ui.press_x, ui.press_y) && touch.sheet != .Game_Menu {
 		touch.sheet = .None
 	}
 	return picked
