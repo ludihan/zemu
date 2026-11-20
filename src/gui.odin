@@ -166,6 +166,9 @@ gui_event :: proc(e: ^sdl.Event) {
 	case .MOUSE_MOTION:
 		ui.mouse_seen = true
 		ui.mx, ui.my = window_to_canvas(e.motion.x, e.motion.y)
+	case .WINDOW_MOUSE_LEAVE:
+		// Don't leave our drawn cursor stuck at the edge of the window.
+		ui.mouse_seen = false
 	case .MOUSE_BUTTON_DOWN:
 		ui.mx, ui.my = window_to_canvas(e.button.x, e.button.y)
 		if e.button.button == sdl.BUTTON_LEFT {

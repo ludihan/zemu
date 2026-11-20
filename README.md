@@ -20,6 +20,25 @@ Android and the web, using SDL3 for windowing, audio and input.
   cheats, gamepads (with Guide or Back+Start to open the GUI), rumble, and
   rebindable keys.
 
+## Screenshots
+
+Desktop: playing 2048, the GAME menu over the paused game, and the core
+downloader.
+
+<p>
+  <img src="docs/screenshots/desktop-game.png" width="32%" alt="2048 running in ZEMU on the desktop">
+  <img src="docs/screenshots/desktop-menu.png" width="32%" alt="The GAME menu open over the paused game">
+  <img src="docs/screenshots/desktop-cores.png" width="32%" alt="The CORES window listing cores to download">
+</p>
+
+Touch: the on-screen gamepad, the in-game menu and the core downloader.
+
+<p>
+  <img src="docs/screenshots/touch-game.png" width="24%" alt="2048 with the on-screen gamepad in the touch UI">
+  <img src="docs/screenshots/touch-menu.png" width="24%" alt="The in-game menu sheet in the touch UI">
+  <img src="docs/screenshots/touch-cores.png" width="24%" alt="The core download list in the touch UI">
+</p>
+
 ## Building
 
 All targets need the Odin compiler (a recent `dev-2026-xx` release).
@@ -85,8 +104,10 @@ src/                  the frontend (package zemu)
   gui*.odin           ZSNES-style desktop GUI, widgets, dialogs, touch UI
   downloader.odin     buildbot catalog and core installs
   http_*.odin         downloads per platform (curl, JNI, fetch)
+  android.odin        Android helpers (system bars, file names) over JNI
 android/              manifest, resources, ZemuActivity.java
 web/                  Emscripten shell, JS glue, C entry
 scripts/              web core builder
-.github/workflows/    CI for every platform
+docs/screenshots/     the screenshots above
+.github/workflows/    CI for Linux, Windows, macOS and Android
 ```
