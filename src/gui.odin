@@ -353,7 +353,8 @@ desktop_keyboard :: proc() {
 		// Nothing open: the arrows/enter bring up the menu bar.
 		for k in ([]sdl.Keycode{sdl.K_DOWN, sdl.K_UP, sdl.K_LEFT, sdl.K_RIGHT, sdl.K_RETURN}) {
 			if consume_key(k) {
-				menu_open(0)
+				// First run: nothing to load yet, so start at CORES.
+				menu_open(2 if len(installed_cores) == 0 && !core.game_loaded else 0)
 				break
 			}
 		}
