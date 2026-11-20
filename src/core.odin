@@ -310,7 +310,13 @@ core_option_find :: proc(key: string) -> ^Core_Option {
 }
 
 core_option_add :: proc(key, desc, info, category: string, values: []Core_Option_Value, default_value: string) {
-	if core_option_find(key) != nil do return
+	if core_option_find(key) != nil {
+		// Already declared: the values were cloned for us, so free them.
+		for v in values {
+			delete(v.value); delete(v.label)
+		}
+		return
+	}
 	o := Core_Option{
 		key      = strings.clone_to_cstring(key),
 		desc     = strings.clone(desc),

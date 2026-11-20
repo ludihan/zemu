@@ -85,6 +85,7 @@ UI :: struct {
 	slider_drag:  int,
 	last_click_ns: u64,
 	last_click_item: int,
+	last_click_list: rawptr, // which list the last click was in
 
 	frame: int,
 	snow:  [SNOW_COUNT]Flake,

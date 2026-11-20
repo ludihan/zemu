@@ -213,9 +213,10 @@ list_box :: proc(cv: ^Canvas, r: Rect, items: []string, st: ^List_State, focused
 		draw_text(cv, row.x + 2, y + 1, fit_text(items[i], inner.w - 4), col)
 		if clicked(row) {
 			now := sdl.GetTicksNS()
-			if ui.last_click_item == i && now - ui.last_click_ns < 400_000_000 do res.activated = true
+			if ui.last_click_list == st && ui.last_click_item == i && now - ui.last_click_ns < 400_000_000 do res.activated = true
 			ui.last_click_ns = now
 			ui.last_click_item = i
+			ui.last_click_list = st
 			st.sel = i
 			res.clicked = true
 		}

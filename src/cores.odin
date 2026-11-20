@@ -138,9 +138,9 @@ cores_for_extension :: proc(ext: string, allocator := context.temp_allocator) ->
 	return res[:]
 }
 
-// Every extension some installed core accepts, plus zip.
+// Every extension some installed core accepts, plus zip (7z isn't supported).
 known_extension :: proc(ext: string) -> bool {
-	if ext == "zip" || ext == "7z" do return true
+	if ext == "zip" do return true
 	return len(cores_for_extension(ext)) > 0
 }
 
