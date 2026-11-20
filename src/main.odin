@@ -42,7 +42,6 @@ app_init :: proc "c" (appstate: ^rawptr, argc: c.int, argv: [^]cstring) -> sdl.A
 			win_h = c.int(sdl.atoi(tcstr(s[x + 1:])))
 		}
 	}
-	if sdl.getenv("ZEMU_TOUCH") != nil do settings.ui_override = .Touch
 	if !sdl.CreateWindowAndRenderer(APP_NAME, win_w, win_h, flags, &app.window, &app.renderer) {
 		fmt.eprintln("CreateWindowAndRenderer failed:", sdl.GetError())
 		return .FAILURE

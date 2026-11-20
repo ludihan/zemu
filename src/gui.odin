@@ -144,6 +144,8 @@ gui_init :: proc() {
 
 // Touch UI on phones, desktop UI elsewhere, unless the user overrides it.
 gui_pick_kind :: proc() -> UI_Kind {
+	// ZEMU_TOUCH=1 tries the touch UI for one run without saving it.
+	if sdl.getenv("ZEMU_TOUCH") != nil do return .Touch
 	switch settings.ui_override {
 	case .Desktop: return .Desktop
 	case .Touch:   return .Touch

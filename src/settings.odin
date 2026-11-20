@@ -133,11 +133,11 @@ set_last_core :: proc(path: string) {
 
 recent_add :: proc(core_path, game_path: string) {
 	entry := fmt.tprintf("%s|%s", core_path, game_path)
-	for r, i in settings.recent {
-		if r == entry {
-			delete(r)
+	// One entry per game, remembering the core it was last played with.
+	for i := len(settings.recent) - 1; i >= 0; i -= 1 {
+		if _, gp := split_recent(settings.recent[i]); gp == game_path {
+			delete(settings.recent[i])
 			ordered_remove(&settings.recent, i)
-			break
 		}
 	}
 	inject_at(&settings.recent, 0, strings.clone(entry))

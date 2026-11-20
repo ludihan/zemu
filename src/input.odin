@@ -79,11 +79,20 @@ input_gamepad_removed :: proc(id: sdl.JoystickID) {
 // and by the GUI so it can be driven with a gamepad.
 input_update :: proc() {
 	keys := sdl.GetKeyboardState(nil)
+	// Alt+Enter toggles fullscreen; don't also press whatever Enter is bound
+	// to, including after Alt is let go while Enter is still down.
+	@(static) enter_in_combo: bool
+	if keys[sdl.Scancode.RETURN] {
+		if keys[sdl.Scancode.LALT] || keys[sdl.Scancode.RALT] do enter_in_combo = true
+	} else {
+		enter_in_combo = false
+	}
 	for port in 0 ..< MAX_PORTS {
 		p := &input.pads[port]
 		p^ = {}
 		if port == 0 && !app.gui_open {
 			for sc, b in settings.keys {
+				if enter_in_combo && sc == .RETURN do continue
 				if sc != .UNKNOWN && keys[sc] do p.buttons |= 1 << u16(b)
 			}
 			p.buttons |= input.touch_pad.buttons
