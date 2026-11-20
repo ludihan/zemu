@@ -64,9 +64,8 @@ example `~/.local/share/zemu/zemu/` on Linux. The path is shown in MISC > ABOUT.
 Browsers can't load native cores, so the web build loads cores compiled to
 WebAssembly side modules with `dlopen`. The buildbot doesn't publish those, so
 `scripts/build_web_cores.sh` builds a set from source into
-`build/web/site/cores/` in the same layout as the buildbot. CI does this and
-deploys the site to GitHub Pages. To enable it, set Pages to "GitHub Actions"
-under the repository settings.
+`build/web/site/cores/` in the same layout as the buildbot. CI doesn't build
+the web version; run `./build.sh web` and the script yourself.
 
 Saves and imported games are kept in IndexedDB. Games can also be dropped on
 the page. `index.html?arg=<core>&arg=<game>` starts a game directly.

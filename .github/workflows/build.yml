@@ -15,7 +15,7 @@ jobs:
   linux:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: laytan/setup-odin@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -39,7 +39,7 @@ jobs:
           cp build/zemu README.md dist/zemu/
           cp -L /usr/local/lib/libSDL3.so.0 dist/zemu/
           tar -C dist -czf zemu-linux-x86_64.tar.gz zemu
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: zemu-linux-x86_64
           path: zemu-linux-x86_64.tar.gz
@@ -47,7 +47,7 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: ilammy/msvc-dev-cmd@v1
       - uses: laytan/setup-odin@v2
         with:
@@ -73,7 +73,7 @@ jobs:
           Copy-Item build/zemu.exe, README.md dist/zemu/
           Copy-Item "sdl/SDL3-$env:SDL_VERSION/lib/x64/SDL3.dll" dist/zemu/
           Compress-Archive dist/zemu zemu-windows-x86_64.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: zemu-windows-x86_64
           path: zemu-windows-x86_64.zip
@@ -81,7 +81,7 @@ jobs:
   macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: laytan/setup-odin@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -97,7 +97,7 @@ jobs:
           install_name_tool -change "$lib" @executable_path/libSDL3.0.dylib dist/zemu/zemu
           codesign --force -s - dist/zemu/libSDL3.0.dylib dist/zemu/zemu
           tar -C dist -czf zemu-macos-arm64.tar.gz zemu
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: zemu-macos-arm64
           path: zemu-macos-arm64.tar.gz
@@ -105,12 +105,12 @@ jobs:
   android:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: laytan/setup-odin@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           release: latest
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
@@ -125,62 +125,23 @@ jobs:
           ZEMU_ANDROID_ABIS: "arm64-v8a x86_64"
         run: ./build.sh android
       - run: mv build/zemu.apk zemu-android.apk
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: zemu-android
           path: zemu-android.apk
 
-  web:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: laytan/setup-odin@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          release: latest
-      - uses: mymindstorm/setup-emsdk@v14
-      - run: sudo apt-get update && sudo apt-get install -y ninja-build zip
-      - run: ./build.sh web
-      - name: Build web cores
-        run: scripts/build_web_cores.sh build/web/site/cores
-      - run: cd build/web/site && zip -qr ../../../zemu-web.zip .
-      - uses: actions/upload-artifact@v4
-        with:
-          name: zemu-web
-          path: zemu-web.zip
-      - uses: actions/upload-pages-artifact@v3
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        with:
-          path: build/web/site
-
-  # The web build at https://<user>.github.io/<repo>/ (enable Pages with
-  # "GitHub Actions" as the source in the repository settings).
-  pages:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: web
-    runs-on: ubuntu-24.04
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
-    steps:
-      - id: deploy
-        uses: actions/deploy-pages@v4
-
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, windows, macos, android, web]
+    needs: [linux, windows, macos, android]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: artifacts/*
           generate_release_notes: true
