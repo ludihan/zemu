@@ -75,7 +75,7 @@ build_android() {
 
 	# Java: SDL's activity classes plus ours, compiled to dex.
 	rm -rf "$out/classes" && mkdir -p "$out/classes"
-	javac --release 11 -nowarn -classpath "$jar" -d "$out/classes" \
+	javac --release 11 -encoding UTF-8 -nowarn -classpath "$jar" -d "$out/classes" \
 		$(find "$SDL_DIR/android-project/app/src/main/java" -name '*.java') \
 		$(find android/java -name '*.java')
 	(cd "$out/classes" && jar cf ../classes.jar .)

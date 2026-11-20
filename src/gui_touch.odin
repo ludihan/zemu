@@ -60,6 +60,7 @@ Touch :: struct {
 
 	fingers: [MAX_FINGERS]Finger,
 	safe:    Rect, // insets: x = left, y = top, w = right, h = bottom
+	picture: Rect, // insets the game picture needs: only what covers the screen
 
 	games:        [dynamic]Game_Entry,
 	games_dirty:  bool,
@@ -96,6 +97,17 @@ touch_layout :: proc(ow, oh: int) {
 		touch.safe.y = int(f32(sr.y) * k + 0.99)
 		touch.safe.w = int(f32(ww - sr.x - sr.w) * k + 0.99)
 		touch.safe.h = int(f32(wh - sr.y - sr.h) * k + 0.99)
+	}
+	// SDL's safe area includes edge gesture zones, which grow in immersive
+	// mode. Buttons keep clear of them; the picture only avoids visible bars
+	// and the cutout.
+	touch.picture = touch.safe
+	when IS_ANDROID {
+		if android_have_visible_insets {
+			px := android_visible_insets
+			sc := i32(ui.scale)
+			touch.picture = {int((px[0] + sc - 1) / sc), int((px[1] + sc - 1) / sc), int((px[2] + sc - 1) / sc), int((px[3] + sc - 1) / sc)}
+		}
 	}
 }
 
@@ -203,6 +215,8 @@ touch_frame :: proc() {
 		case .Cores:
 			touch.page = .Games
 		case .Games:
+			// Nothing left to close: leave the app the usual way.
+			when IS_ANDROID do sdl.SendAndroidBackButton()
 		}
 	}
 	touch_scroll_physics()
@@ -521,6 +535,15 @@ import_rom_file :: proc(src: string) {
 		return
 	}
 	name := uri_file_name(src)
+	when IS_ANDROID {
+		// Ask the provider: Downloads and others hand out ids like "msf:1234".
+		if strings.has_prefix(src, "content://") {
+			if dn, ok := android_display_name(src); ok do name = dn
+		}
+	}
+	// Never let a name step out of the library folder.
+	name = base_name(name)
+	if name == "" || name == "." || name == ".." do name = "game.bin"
 	if !write_file(join_path(paths.roms, name, context.temp_allocator), data) {
 		osd_message("COULD NOT SAVE FILE")
 		return
@@ -938,10 +961,13 @@ pad_layout :: proc(cv: ^Canvas) -> (p: Pad_Layout) {
 	aspect := video_aspect() if core.game_loaded else 4.0 / 3.0
 	portrait := cv.h > cv.w
 
+	ps := touch.picture
+	pic := Rect{ps.x, ps.y, cv.w - ps.x - ps.w, cv.h - ps.y - ps.h}
 	if portrait {
-		gh := min(int(f32(area.w) / aspect), area.h * 55 / 100)
-		p.game = {area.x, area.y, area.w, gh}
-		ctl := Rect{area.x, area.y + gh, area.w, area.h - gh}
+		gh := min(int(f32(pic.w) / aspect), area.h * 55 / 100)
+		p.game = {pic.x, pic.y, pic.w, gh}
+		ctl_y := max(pic.y + gh, area.y)
+		ctl := Rect{area.x, ctl_y, area.w, area.y + area.h - ctl_y}
 		cy := ctl.y + ctl.h * 52 / 100
 		p.dpad_r = min(area.w * 19 / 100, ctl.h * 28 / 100)
 		p.dpad = {ctl.x + area.w * 25 / 100, cy}
@@ -955,7 +981,7 @@ pad_layout :: proc(cv: ^Canvas) -> (p: Pad_Layout) {
 		p.menu = {ctl.x + ctl.w / 2 - 20, ctl.y + 11, 40, 14}
 		p.ff   = {ctl.x + ctl.w / 2 - 20, ctl.y + 29, 40, 14}
 	} else {
-		p.game = area
+		p.game = pic
 		p.dpad_r = min(area.h * 22 / 100, area.w * 12 / 100)
 		p.dpad = {area.x + p.dpad_r + 18, area.y + area.h - p.dpad_r - 20}
 		fc := [2]int{area.x + area.w - p.dpad_r - 18, p.dpad.y}

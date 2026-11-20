@@ -475,10 +475,12 @@ video_dialog :: proc(cv: ^Canvas, b: Rect) {
 	}
 	y += 4
 	_ = checkbox(cv, b.x, y, "BILINEAR FILTER", &settings.video_filter); y += 11
-	if checkbox(cv, b.x, y, "FULLSCREEN", &settings.fullscreen) {
-		_ = sdl.SetWindowFullscreen(app.window, settings.fullscreen)
+	when !IS_ANDROID { // Android hides the bars on its own while playing
+		if checkbox(cv, b.x, y, "FULLSCREEN", &settings.fullscreen) {
+			_ = sdl.SetWindowFullscreen(app.window, settings.fullscreen)
+		}
+		y += 11
 	}
-	y += 11
 	if checkbox(cv, b.x, y, "VSYNC", &settings.vsync) {
 		_ = sdl.SetRenderVSync(app.renderer, 1 if settings.vsync else 0)
 	}

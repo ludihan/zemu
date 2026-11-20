@@ -24,6 +24,10 @@ app_init :: proc "c" (appstate: ^rawptr, argc: c.int, argv: [^]cstring) -> sdl.A
 	context = app_ctx
 	_ = sdl.SetAppMetadata(APP_NAME, APP_VERSION, "dev.zemu.libretro")
 	_ = sdl.SetHint(sdl.HINT_RENDER_VSYNC, "1")
+	// Back is ours: it opens the game menu and steps back through pages.
+	// Untrapped, Android would also send the app to the background on every
+	// press. touch_frame hands it back to the system on the library page.
+	_ = sdl.SetHint(sdl.HINT_ANDROID_TRAP_BACK_BUTTON, "1")
 	if !sdl.Init({.VIDEO, .AUDIO, .GAMEPAD}) {
 		fmt.eprintln("SDL_Init failed:", sdl.GetError())
 		return .FAILURE
@@ -32,7 +36,9 @@ app_init :: proc "c" (appstate: ^rawptr, argc: c.int, argv: [^]cstring) -> sdl.A
 	settings_load()
 
 	flags: sdl.WindowFlags = {.RESIZABLE, .HIGH_PIXEL_DENSITY}
-	if settings.fullscreen do flags += {.FULLSCREEN}
+	// Android hides the system bars itself while playing (main loop); SDL's
+	// fullscreen there resizes the surface and can leave rendering stuck.
+	if settings.fullscreen && !IS_ANDROID do flags += {.FULLSCREEN}
 	win_w, win_h: c.int = 256 * 3, 224 * 3
 	// ZEMU_WINDOW=WxH, handy for trying phone shapes with the touch UI.
 	if ws := sdl.getenv("ZEMU_WINDOW"); ws != nil {
@@ -107,7 +113,17 @@ app_iterate :: proc "c" (appstate: rawptr) -> sdl.AppResult {
 	_ = sdl.GetRenderOutputSize(app.renderer, &w, &h)
 	if !core.game_loaded && !app.gui_open {
 		app.gui_open = true
+		gui_cancel_press()
 		gui_update_cursor()
+	}
+	when IS_ANDROID {
+		// Hide the status and navigation bars while a game is playing; bring
+		// them back in the menus so the user can leave the app.
+		@(static) immersive: bool
+		if want := core.game_loaded && !app.gui_open; want != immersive {
+			immersive = want
+			android_set_immersive(want)
+		}
 	}
 	video_draw(game_area(f32(w), f32(h)), app.gui_open)
 	gui_frame()
@@ -188,7 +204,17 @@ app_event :: proc "c" (appstate: rawptr, event: ^sdl.Event) -> sdl.AppResult {
 		}
 	case .WILL_ENTER_BACKGROUND, .WINDOW_FOCUS_LOST:
 		sram_save()
-		if event.type == .WILL_ENTER_BACKGROUND && core.game_loaded && !app.gui_open do gui_toggle()
+		if event.type == .WILL_ENTER_BACKGROUND {
+			if core.game_loaded && !app.gui_open do gui_toggle()
+			// Mobile systems kill background apps without a quit event,
+			// so save everything app_quit would.
+			settings_save()
+			core_options_save()
+		}
+	case .TERMINATING:
+		sram_save()
+		settings_save()
+		core_options_save()
 	}
 	if app.gui_open || ui.kind == .Touch do gui_event(event)
 	return .CONTINUE
@@ -232,12 +258,14 @@ gui_toggle :: proc() {
 	if app.gui_open {
 		sram_save()
 		ui.menu = -1
+		gui_cancel_press()
 	}
 	audio_pause(app.gui_open)
 	gui_update_cursor()
 }
 
 toggle_fullscreen :: proc() {
+	when IS_ANDROID do return // see app_init
 	settings.fullscreen = !settings.fullscreen
 	_ = sdl.SetWindowFullscreen(app.window, settings.fullscreen)
 }

@@ -219,6 +219,13 @@ key_pressed :: proc(k: sdl.Keycode) -> bool {
 	return false
 }
 
+// A press that began in the game (a finger on START, a click) mustn't
+// click whatever is under it in the GUI that just opened when it's released.
+gui_cancel_press :: proc() {
+	ui.press_x, ui.press_y = -10000, -10000
+	ui.mouse_pressed = false
+}
+
 consume_key :: proc(k: sdl.Keycode) -> bool {
 	for kk, i in ui.keys {
 		if kk == k {
@@ -721,6 +728,7 @@ launch_game :: proc(core_path, game_path: string) -> bool {
 	}
 	set_last_core(core_path)
 	recent_add(core_path, game_path)
+	settings_save() // keep the recent list even if we're killed, not quit
 	ui.dialog = .None
 	ui.menu = -1
 	app.gui_open = false
