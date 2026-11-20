@@ -343,6 +343,13 @@ desktop_keyboard :: proc() {
 			}
 		}
 	} else if ui.dialog == .None {
+		// Number keys start the games listed under GAME (and on the home screen).
+		for i in 0 ..< min(len(settings.recent), 9) {
+			if consume_key(sdl.K_1 + sdl.Keycode(i)) {
+				menu_action(.Recent, i)
+				return
+			}
+		}
 		// Nothing open: the arrows/enter bring up the menu bar.
 		for k in ([]sdl.Keycode{sdl.K_DOWN, sdl.K_UP, sdl.K_LEFT, sdl.K_RIGHT, sdl.K_RETURN}) {
 			if consume_key(k) {
@@ -359,12 +366,42 @@ draw_background :: proc(cv: ^Canvas) {
 	vgradient(cv, {0, 0, cv.w, cv.h}, shade(theme.base, 0.3), rgb(0, 0, 8))
 }
 
-// Home screen extras: a hint and the version, over the snow.
+HOME_RECENT :: 5
+
+// Home screen: recent games to jump back into, a hint and the version.
 draw_home :: proc(cv: ^Canvas) {
 	ver := fmt.tprintf("V%s", APP_VERSION)
 	draw_text(cv, cv.w - text_width(ver) - 4, cv.h - LINE_H - 2, ver, theme.text_dim)
-	hint := "NO CORES INSTALLED - SEE CORES MENU" if len(installed_cores) == 0 else "GAME - LOAD TO START"
+	hint := "GAME - LOAD TO START"
+	if len(installed_cores) == 0 do hint = "NO CORES INSTALLED - SEE CORES MENU"
+	else if len(settings.recent) > 0 do hint = "NUMBER: PLAY RECENT   ENTER: MENU"
 	draw_text(cv, (cv.w - text_width(hint)) / 2, cv.h - LINE_H * 3, hint, theme.text_dim)
+
+	n := min(len(settings.recent), HOME_RECENT)
+	if n == 0 || ui.dialog != .None do return
+	row_h := LINE_H + 3
+	w := 0
+	for r in settings.recent[:n] {
+		_, gp := split_recent(r)
+		w = max(w, text_width(stem(gp)) + 24)
+	}
+	w = clamp(w, 120, cv.w - 16)
+	x := (cv.w - w) / 2
+	y := max(MENUBAR_H + 8, (cv.h - (n + 1) * row_h) / 3)
+	draw_text(cv, x, y, "RECENT", theme.text_hi)
+	y += row_h
+	pick := -1
+	for r, i in settings.recent[:n] {
+		_, gp := split_recent(r)
+		row := Rect{x - 3, y - 2, w + 6, row_h}
+		hover := ui.menu < 0 && rect_contains(row, ui.mx, ui.my)
+		if hover do fill_rect(cv, row, shade(theme.select, 0.8))
+		draw_text(cv, x, y, fmt.tprintf("%d", i + 1), theme.text_dim)
+		draw_text(cv, x + 12, y, fit_text(strings.to_upper(stem(gp), context.temp_allocator), w - 12), theme.text if hover else theme.text_dim)
+		if ui.menu < 0 && clicked(row) do pick = i
+		y += row_h
+	}
+	if pick >= 0 do menu_action(.Recent, pick)
 }
 
 snow_respawn :: proc(f: ^Flake, anywhere: bool) {
@@ -500,7 +537,7 @@ menu_items :: proc(m: int) -> []Menu_Item {
 			sep(&items)
 			for r, i in settings.recent {
 				_, game_path := split_recent(r)
-				add(&items, fmt.tprintf("%d %s", (i + 1) % 10, stem(game_path)), .Recent, i)
+				add(&items, fmt.tprintf("%s %s", fmt.tprintf("%d", i + 1) if i < 9 else " ", stem(game_path)), .Recent, i)
 			}
 		}
 	case 1: // CONFIG
