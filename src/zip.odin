@@ -5,6 +5,7 @@ package zemu
 
 import "core:compress/deflate"
 import "core:encoding/endian"
+import sdl "vendor:sdl3"
 
 Zip_Entry :: struct {
 	name:              string, // points into the archive data
@@ -100,4 +101,49 @@ zip_extract_first :: proc(data: []byte, allocator := context.allocator) -> (out:
 		}
 	}
 	return nil, false
+}
+
+// Name of the first regular file in a zip on disk, reading only the central
+// directory, so big archives cost little to inspect. Temp allocated.
+zip_first_file_name :: proc(path: string) -> (name: string, ok: bool) {
+	EOCD_SIG :: 0x06054b50
+	CDIR_SIG :: 0x02014b50
+	io := sdl.IOFromFile(tcstr(path), "rb")
+	if io == nil do return "", false
+	defer sdl.CloseIO(io)
+	size := int(sdl.GetIOSize(io))
+	if size < 22 do return "", false
+
+	tail_len := min(size, 65557)
+	tail := make([]byte, tail_len, context.temp_allocator)
+	if sdl.SeekIO(io, sdl.Sint64(size - tail_len), .SEEK_SET) < 0 do return "", false
+	if int(sdl.ReadIO(io, raw_data(tail), uint(tail_len))) != tail_len do return "", false
+	eocd := -1
+	for i := tail_len - 22; i >= 0; i -= 1 {
+		if u32le(tail, i) == EOCD_SIG {
+			eocd = i
+			break
+		}
+	}
+	if eocd < 0 do return "", false
+	count := int(u16le(tail, eocd + 10))
+	cdir_size := int(u32le(tail, eocd + 12))
+	cdir_off := int(u32le(tail, eocd + 16))
+	if cdir_size <= 0 || cdir_off + cdir_size > size do return "", false
+
+	cdir := make([]byte, cdir_size, context.temp_allocator)
+	if sdl.SeekIO(io, sdl.Sint64(cdir_off), .SEEK_SET) < 0 do return "", false
+	if int(sdl.ReadIO(io, raw_data(cdir), uint(cdir_size))) != cdir_size do return "", false
+	p := 0
+	for _ in 0 ..< count {
+		if p + 46 > len(cdir) || u32le(cdir, p) != CDIR_SIG do break
+		name_len := int(u16le(cdir, p + 28))
+		extra_len := int(u16le(cdir, p + 30))
+		cmt_len := int(u16le(cdir, p + 32))
+		if p + 46 + name_len > len(cdir) do break
+		n := string(cdir[p + 46:][:name_len])
+		if len(n) > 0 && n[len(n) - 1] != '/' do return n, true
+		p += 46 + name_len + extra_len + cmt_len
+	}
+	return "", false
 }

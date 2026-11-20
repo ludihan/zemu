@@ -534,7 +534,7 @@ menu_step :: proc(items: []Menu_Item, cur, dir: int) -> int {
 	i := cur
 	for _ in 0 ..< n {
 		i = (i + dir + n) % n
-		if !items[i].sep do return i
+		if !items[i].sep && items[i].enabled do return i
 	}
 	return cur
 }

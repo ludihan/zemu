@@ -206,8 +206,13 @@ load_dialog_candidates :: proc(path: string) -> []int {
 	res := make([dynamic]int, context.temp_allocator)
 	cands := cores_for_extension(ext)
 	if ext == "zip" && len(cands) == 0 {
-		for _, i in installed_cores do append(&res, i)
-		return res[:]
+		// Cores that open the file inside, or failing that any core that
+		// takes content: cores that run without a game can't open a zip.
+		if inner, ok := zip_inner_extension(path); ok do cands = cores_for_extension(inner)
+		if len(cands) == 0 {
+			for e, i in installed_cores do if e.extensions != "" do append(&res, i)
+			return res[:]
+		}
 	}
 	if core_loaded {
 		if i := core_entry_index(core.path); i >= 0 {
@@ -219,6 +224,23 @@ load_dialog_candidates :: proc(path: string) -> []int {
 		append(&res, c)
 	}
 	return res[:]
+}
+
+// Extension of the first file in a zip. Cached, since the dialogs ask
+// every frame.
+zip_inner_extension :: proc(path: string) -> (string, bool) {
+	@(static) cached_path: string
+	@(static) cached_ext: string
+	@(static) cached_ok: bool
+	if path != cached_path {
+		delete(cached_path)
+		delete(cached_ext)
+		cached_path = strings.clone(path)
+		name, ok := zip_first_file_name(path)
+		cached_ext = strings.clone(extension(name)) if ok else ""
+		cached_ok = ok
+	}
+	return cached_ext, cached_ok
 }
 
 load_dialog_go_up :: proc() {
