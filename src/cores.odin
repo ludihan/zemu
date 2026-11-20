@@ -138,10 +138,38 @@ cores_for_extension :: proc(ext: string, allocator := context.temp_allocator) ->
 	return res[:]
 }
 
+// Extensions some libretro core opens, from the .info files fetched with the
+// core list. Lets the file browser show games no installed core opens yet.
+catalog_exts: map[string]bool
+catalog_exts_loaded: bool
+
+catalog_exts_load :: proc() {
+	for k in catalog_exts do delete(k)
+	clear(&catalog_exts)
+	catalog_exts_loaded = true
+	for d in list_dir(paths.info, context.temp_allocator) {
+		if d.is_dir || !strings.has_suffix(d.name, "_libretro.info") do continue
+		info, ok := core_info_read(d.name[:len(d.name) - len("_libretro.info")])
+		if !ok do continue
+		exts := info.extensions
+		for e in strings.split_iterator(&exts, "|") {
+			l := strings.to_lower(strings.trim_space(e), context.temp_allocator)
+			if l != "" && l not_in catalog_exts do catalog_exts[strings.clone(l)] = true
+		}
+	}
+}
+
 // Every extension some installed core accepts, plus zip (7z isn't supported).
 known_extension :: proc(ext: string) -> bool {
 	if ext == "zip" do return true
 	return len(cores_for_extension(ext)) > 0
+}
+
+// Something a core could open: installed or available to download.
+loadable_extension :: proc(ext: string) -> bool {
+	if known_extension(ext) do return true
+	if !catalog_exts_loaded do catalog_exts_load()
+	return ext in catalog_exts
 }
 
 core_entry_index :: proc(path: string) -> int {

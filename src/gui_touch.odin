@@ -456,6 +456,7 @@ touch_launch :: proc(path, last_core: string) {
 			touch.cores_remote = true
 			clear(&cores_dlg.search)
 			append(&cores_dlg.search, ..transmute([]u8)extension(path))
+			set_pending_game(path)
 			osd_message("GET A CORE FOR THIS GAME")
 		} else {
 			osd_message("NO CORE FOR THIS GAME")
@@ -612,6 +613,18 @@ remote_cores_list :: proc(cv: ^Canvas, area: Rect) {
 	if len(cores_dlg.search) == 0 && ui.focus == 0 do draw_text(cv, sr.x + 4, sr.y + 6, "SEARCH NAME, SYSTEM, EXTENSION", theme.text_dim)
 
 	list := Rect{area.x, area.y + 20, area.w, area.h - 20}
+	// The game that brought us here can be opened now.
+	if pc := pending_game_core(); pc >= 0 && dl.job == nil {
+		pr := Rect{area.x + 8, list.y, area.w - 16, 20}
+		if t_button(cv, pr, fmt.tprintf("PLAY %s", strings.to_upper(stem(pending_game), context.temp_allocator))) {
+			game := strings.clone(pending_game, context.temp_allocator)
+			set_pending_game("")
+			touch_launch(game, installed_cores[pc].path)
+			return
+		}
+		list.y += 24
+		list.h -= 24
+	}
 	switch dl.state {
 	case .Empty, .Loading:
 		empty_state(cv, list, "LOADING", "GETTING THE CORE LIST...")

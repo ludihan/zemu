@@ -188,7 +188,7 @@ load_dialog_filter :: proc() {
 	for e, i in load_dlg.entries {
 		if e.is_dir {
 			if !strings.has_prefix(e.name, ".") do append(&load_dlg.dirs, i)
-		} else if load_dlg.show_all || (!strings.has_prefix(e.name, ".") && (len(installed_cores) == 0 || known_extension(extension(e.name)))) {
+		} else if load_dlg.show_all || (!strings.has_prefix(e.name, ".") && loadable_extension(extension(e.name))) {
 			append(&load_dlg.files, i)
 		}
 	}
@@ -256,7 +256,7 @@ load_dialog_launch :: proc() {
 		// Take the user straight to cores that can open it.
 		if downloads_supported() {
 			set_last_dir(load_dlg.dir)
-			cores_dialog_find(extension(path))
+			cores_dialog_find(extension(path), path)
 		} else {
 			message_box("NO CORE", "NO INSTALLED CORE OPENS THIS FILE.")
 		}
@@ -301,8 +301,13 @@ load_dialog :: proc(cv: ^Canvas, b: Rect) {
 		}
 	}
 
+	// Dim games no installed core opens yet: LOAD finds one to download.
+	file_colors := make([]Color, len(dlg.files), context.temp_allocator)
+	for fi, i in dlg.files {
+		if !known_extension(extension(dlg.entries[fi].name)) do file_colors[i] = theme.text_dim
+	}
 	old_sel := dlg.file_list.sel
-	fr := list_box(cv, files_r, file_names, &dlg.file_list, !dlg.focus_dirs)
+	fr := list_box(cv, files_r, file_names, &dlg.file_list, !dlg.focus_dirs, file_colors)
 	if fr.clicked do dlg.focus_dirs = false
 	if dlg.file_list.sel != old_sel do dlg.core_pick = 0
 	if fr.activated {

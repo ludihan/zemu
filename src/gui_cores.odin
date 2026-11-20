@@ -29,8 +29,25 @@ cores_dialog_open :: proc() {
 	cores_dlg.tab = .Download if len(installed_cores) == 0 && downloads_supported() else .Installed
 }
 
+// A game the user tried to open without a fitting core. Once one is
+// installed the CORES window offers to start it.
+pending_game: string
+
+set_pending_game :: proc(path: string) {
+	delete(pending_game)
+	pending_game = strings.clone(path)
+}
+
+// Installed core that can open the pending game, or -1.
+pending_game_core :: proc() -> int {
+	if pending_game == "" do return -1
+	cands := load_dialog_candidates(pending_game)
+	return cands[0] if len(cands) > 0 else -1
+}
+
 // Open the download list filtered to cores that open files of this type.
-cores_dialog_find :: proc(ext: string) {
+cores_dialog_find :: proc(ext: string, game := "") {
+	if game != "" do set_pending_game(game)
 	dialog_open(.Cores)
 	cores_dlg.tab = .Download
 	clear(&cores_dlg.search)
@@ -151,6 +168,16 @@ download_tab :: proc(cv: ^Canvas, b: Rect) {
 		// Unknown size: show an animated sweep.
 		t := f32(ui.frame % 60) / 60
 		progress_bar(cv, {b.x, y + 10, b.w - 66, 6}, t)
+	} else if pc := pending_game_core(); pc >= 0 {
+		// The game that brought us here can be opened now.
+		label(cv, b.x, y, fit_text(fmt.tprintf("READY: %s", installed_cores[pc].name), b.w), theme.text_hi)
+		play := fmt.tprintf("PLAY %s", strings.to_upper(stem(pending_game), context.temp_allocator))
+		if button(cv, {b.x, b.y + b.h - 13, b.w - 66, 12}, play) {
+			game := strings.clone(pending_game, context.temp_allocator)
+			set_pending_game("")
+			_ = launch_game(installed_cores[pc].path, game)
+			return
+		}
 	} else if has {
 		rc := dl.remote[rows[sel]]
 		info := rc.system if rc.system != "" else rc.id

@@ -101,7 +101,10 @@ downloader_update :: proc() {
 		http_poll(dl.index_req)
 		http_poll(dl.info_req)
 		if dl.index_req.state != .Running && dl.info_req.state != .Running {
-			if dl.info_req.state == .Done do info_zip_install(dl.info_req.dest)
+			if dl.info_req.state == .Done {
+				info_zip_install(dl.info_req.dest)
+				catalog_exts_loaded = false // re-read on next use
+			}
 			if dl.index_req.state == .Done {
 				catalog_parse(dl.index_req.dest)
 				dl.state = .Ready
