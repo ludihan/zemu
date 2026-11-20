@@ -71,6 +71,7 @@ Touch :: struct {
 	import_mutex: ^sdl.Mutex,
 	imported:     [dynamic]string, // files picked in the system dialog, to copy in
 	menu_was_down: bool,
+	confirm:       bool, // the open sheet's destructive item was tapped once
 }
 
 touch: Touch
@@ -173,6 +174,7 @@ touch_frame :: proc() {
 	}
 
 	back := consume_key(sdl.K_ESCAPE) || consume_key(sdl.K_AC_BACK)
+	if touch.sheet == .None do touch.confirm = false
 
 	showing_page := !(in_game && touch.sheet == .Game_Menu)
 	if showing_page {
@@ -841,7 +843,9 @@ touch_sheet :: proc(cv: ^Canvas) {
 		}
 		g := touch.games[touch.sheet_index]
 		in_lib := strings.has_prefix(g.path, paths.roms)
-		items := []Sheet_Item{{"PLAY", true}, {"OPEN WITH...", true}, {"DELETE FROM LIBRARY" if in_lib else "REMOVE FROM RECENT", true}}
+		del_label := "REMOVE FROM RECENT"
+		if in_lib do del_label = "TAP AGAIN TO DELETE" if touch.confirm else "DELETE FROM LIBRARY"
+		items := []Sheet_Item{{"PLAY", true}, {"OPEN WITH...", true}, {del_label, true}}
 		switch action_sheet(cv, g.name, items) {
 		case 0:
 			touch.sheet = .None
@@ -849,10 +853,12 @@ touch_sheet :: proc(cv: ^Canvas) {
 		case 1:
 			touch.sheet = .None
 			touch_launch(g.path, "")
-			if touch.sheet == .None && len(load_dialog_candidates(g.path)) == 1 {
-				// Only one core fits: nothing to choose.
-			}
 		case 2:
+			// Deleting the file asks first; dropping a recent entry doesn't.
+			if in_lib && !touch.confirm {
+				touch.confirm = true
+				break
+			}
 			touch.sheet = .None
 			if in_lib do _ = delete_file(g.path)
 			for r, i in settings.recent {
@@ -872,7 +878,7 @@ touch_sheet :: proc(cv: ^Canvas) {
 			return
 		}
 		e := installed_cores[touch.sheet_index]
-		items := []Sheet_Item{{"START WITHOUT GAME", e.no_game}, {"REMOVE", true}}
+		items := []Sheet_Item{{"START WITHOUT GAME", e.no_game}, {"TAP AGAIN TO REMOVE" if touch.confirm else "REMOVE", true}}
 		switch action_sheet(cv, e.name, items) {
 		case 0:
 			touch.sheet = .None
@@ -882,6 +888,10 @@ touch_sheet :: proc(cv: ^Canvas) {
 				gui_update_cursor()
 			}
 		case 1:
+			if !touch.confirm {
+				touch.confirm = true
+				break
+			}
 			touch.sheet = .None
 			if core_loaded && core.path == e.path do core_unload()
 			_ = delete_file(e.path)

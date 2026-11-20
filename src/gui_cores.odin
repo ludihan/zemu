@@ -16,12 +16,15 @@ Cores_Dialog :: struct {
 	installed: List_State,
 	remote:    List_State,
 	search:    [dynamic]u8,
+	last_search: [dynamic]u8, // search text the list was last filtered with
+	confirm_remove: int, // installed core waiting for a second REMOVE click, -1 if none
 }
 
 cores_dlg: Cores_Dialog
 
 cores_dialog_open :: proc() {
 	cores_scan()
+	cores_dlg.confirm_remove = -1
 	if downloads_supported() && (dl.state == .Empty || dl.state == .Failed) do catalog_refresh()
 	cores_dlg.tab = .Download if len(installed_cores) == 0 && downloads_supported() else .Installed
 }
@@ -73,8 +76,21 @@ download_tab :: proc(cv: ^Canvas, b: Rect) {
 		return
 	}
 
+	// Search as you type: letters go to FIND even when it isn't focused,
+	// while the arrows keep moving through the list.
+	if ui.focus == 0 && !ui.input_blocked {
+		for ch in transmute([]u8)strings.to_string(ui.text) {
+			if len(cores_dlg.search) < 32 && ch > 32 && ch < 127 do append(&cores_dlg.search, ch)
+		}
+		strings.builder_reset(&ui.text)
+		if len(cores_dlg.search) > 0 && consume_key(sdl.K_BACKSPACE) do pop(&cores_dlg.search)
+	}
 	label(cv, b.x, b.y + 2, "FIND")
-	_ = text_field(cv, {b.x + 28, b.y, b.w - 28 - 56, 11}, &cores_dlg.search, 32)
+	find_r := Rect{b.x + 28, b.y, b.w - 28 - 56, 11}
+	_ = text_field(cv, find_r, &cores_dlg.search, 32)
+	if len(cores_dlg.search) == 0 && ui.focus == 0 {
+		label(cv, find_r.x + 3, find_r.y + 3, fit_text("TYPE: NAME, SYSTEM, EXTENSION", find_r.w - 6), theme.text_dim)
+	}
 	if button(cv, {b.x + b.w - 50, b.y, 50, 11}, "REFRESH", dl.state != .Loading && !download_busy()) do catalog_refresh()
 
 	query := string(cores_dlg.search[:])
@@ -103,6 +119,13 @@ download_tab :: proc(cv: ^Canvas, b: Rect) {
 
 	lr := Rect{b.x, b.y + 14, b.w, b.h - 14 - 34}
 	st := &cores_dlg.remote
+	// New search text: back to the top. Keep a row selected so Enter works.
+	if query != string(cores_dlg.last_search[:]) {
+		clear(&cores_dlg.last_search)
+		append(&cores_dlg.last_search, ..cores_dlg.search[:])
+		st^ = {}
+	}
+	if st.sel < 0 && len(rows) > 0 do st.sel = 0
 	visible := (lr.h - 4) / LINE_H
 	enter := false
 	if ui.focus == 0 do enter = list_keys(st, len(rows), visible)
@@ -177,11 +200,19 @@ installed_tab :: proc(cv: ^Canvas, b: Rect) {
 		}
 		message_box("ERROR", "THE CORE DID NOT START")
 	}
-	if button(cv, {b.x + 54, y, 50, 12}, "REMOVE", has) {
-		path := installed_cores[sel].path
-		if core_loaded && core.path == path do core_unload()
-		_ = delete_file(path)
-		cores_scan()
+	// Two clicks to remove: the first asks, moving the selection cancels.
+	if !has || cores_dlg.confirm_remove != sel do cores_dlg.confirm_remove = -1
+	asking := has && cores_dlg.confirm_remove == sel
+	if button(cv, {b.x + 54, y, 50, 12}, "SURE?" if asking else "REMOVE", has) {
+		if asking {
+			path := installed_cores[sel].path
+			if core_loaded && core.path == path do core_unload()
+			_ = delete_file(path)
+			cores_scan()
+			cores_dlg.confirm_remove = -1
+		} else {
+			cores_dlg.confirm_remove = sel
+		}
 	}
 	can_update := downloads_supported() && dl.state == .Ready && len(installed_cores) > 0 && !download_busy()
 	if button(cv, {b.x + b.w - 70, y, 70, 12}, "UPDATE ALL", can_update) do update_all_cores()

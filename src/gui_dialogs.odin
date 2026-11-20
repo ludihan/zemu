@@ -34,7 +34,7 @@ dialog_size :: proc(d: Dialog) -> (w, h: int) {
 	case .Core_Options:   return min(cw - 8, 360), min(ch - 8, 260)
 	case .Cheat_Browse:   return min(cw - 8, 300), min(ch - 8, 200)
 	case .Input:          return 230, 196
-	case .Pick_State:     return 160, 92
+	case .Pick_State:     return 160, 102
 	case .Video:          return 170, 116
 	case .Sound:          return 170, 80
 	case .Cheat_Add:      return 200, 96
@@ -358,9 +358,17 @@ load_dialog_open_dir :: proc(sel: int) {
 // --- Pick state -------------------------------------------------------------
 
 state_used: [10]bool
+state_time: [10]sdl.DateTime
 
 pick_state_open :: proc() {
-	for i in 0 ..< 10 do state_used[i] = state_exists(i)
+	for i in 0 ..< 10 {
+		state_used[i] = state_exists(i)
+		state_time[i] = {}
+		info: sdl.PathInfo
+		if state_used[i] && sdl.GetPathInfo(tcstr(state_path(i)), &info) {
+			_ = sdl.TimeToDateTime(info.modify_time, &state_time[i], true)
+		}
+	}
 }
 
 pick_state_dialog :: proc(cv: ^Canvas, b: Rect) {
@@ -372,7 +380,14 @@ pick_state_dialog :: proc(cv: ^Canvas, b: Rect) {
 	}
 	if consume_key(sdl.K_LEFT)  do state_slot = (state_slot + 9) % 10
 	if consume_key(sdl.K_RIGHT) do state_slot = (state_slot + 1) % 10
-	y := b.y + 48
+	// When the selected slot was saved.
+	when_s := "EMPTY"
+	if state_used[state_slot] {
+		t := state_time[state_slot]
+		when_s = fmt.tprintf("SAVED %04d-%02d-%02d %02d:%02d", t.year, t.month, t.day, t.hour, t.minute)
+	}
+	label(cv, b.x, b.y + 45, when_s, theme.text_dim)
+	y := b.y + 57
 	if button(cv, {b.x, y, 70, 12}, "SAVE") {
 		_ = state_save(state_slot)
 		dialog_close()
@@ -398,6 +413,10 @@ input_dialog :: proc(cv: ^Canvas, b: Rect) {
 			if k == sdl.K_ESCAPE do break
 			sc := sdl.GetScancodeFromKey(k, nil)
 			if sc != .UNKNOWN {
+				// A key drives one button: whoever had it takes this button's old key.
+				for &other, i in settings.keys {
+					if other == sc && i != input_capture do other = settings.keys[input_capture]
+				}
 				settings.keys[input_capture] = sc
 				input_capture = -1
 				break
@@ -470,7 +489,8 @@ sound_dialog :: proc(cv: ^Canvas, b: Rect) {
 	y := b.y + 14
 	if audio.stream != nil {
 		label(cv, b.x, y, fmt.tprintf("CORE RATE: %.0f HZ", audio.sample_rate), theme.text_dim)
-		label(cv, b.x, y + 10, fmt.tprintf("LATENCY: %.0f MS", audio_queued_ms()), theme.text_dim)
+		// Audio is paused while the GUI is up, so show the target, not the empty queue.
+		label(cv, b.x, y + 10, fmt.tprintf("LATENCY: %d MS", AUDIO_TARGET_MS), theme.text_dim)
 	} else {
 		label(cv, b.x, y, "NO GAME RUNNING", theme.text_dim)
 	}
