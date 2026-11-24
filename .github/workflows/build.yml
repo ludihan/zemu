@@ -123,6 +123,8 @@ jobs:
       - name: Build
         env:
           ZEMU_ANDROID_ABIS: "arm64-v8a x86_64"
+          ZEMU_ANDROID_PLATFORM: "35"
+          ZEMU_ANDROID_BUILD_TOOLS: "35.0.0"
         run: ./build.sh android
       - run: mv build/zemu.apk zemu-android.apk
       - uses: actions/upload-artifact@v7

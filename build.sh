@@ -31,10 +31,22 @@ build_android() {
 	: "${ANDROID_HOME:?set ANDROID_HOME to the Android SDK}"
 	: "${ANDROID_NDK_HOME:?set ANDROID_NDK_HOME to the Android NDK}"
 	local api=29
-	local platform
-	platform="$(ls -d "$ANDROID_HOME"/platforms/android-* | sort -V | tail -1)"
-	local tools
-	tools="$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)"
+	# Newest stable platform and build-tools, unless pinned. Preview SDKs
+	# (android-37.0-beta3, 37.0.0-rc1, ...) are skipped: building against one
+	# gives a non-numeric targetSdkVersion and devices refuse to install it.
+	local target_sdk="${ZEMU_ANDROID_PLATFORM:-}"
+	if [ -z "$target_sdk" ]; then
+		target_sdk="$(ls "$ANDROID_HOME/platforms" | grep -E '^android-[0-9]+$' \
+			| sed 's/^android-//' | sort -n | tail -1)"
+	fi
+	local platform="$ANDROID_HOME/platforms/android-$target_sdk"
+	[ -f "$platform/android.jar" ] || { echo "no stable Android platform found ($platform)" >&2; exit 1; }
+	local tools="${ZEMU_ANDROID_BUILD_TOOLS:-}"
+	if [ -z "$tools" ]; then
+		tools="$(ls "$ANDROID_HOME/build-tools" | grep -E '^[0-9]+(\.[0-9]+)*$' | sort -V | tail -1)"
+	fi
+	tools="$ANDROID_HOME/build-tools/$tools"
+	[ -x "$tools/aapt2" ] || { echo "no stable Android build-tools found ($tools)" >&2; exit 1; }
 	local jar="$platform/android.jar"
 	local out=build/android
 	local abis="${ZEMU_ANDROID_ABIS:-arm64-v8a}"
@@ -85,7 +97,7 @@ build_android() {
 	"$tools/aapt2" compile --dir android/res -o "$out/res.zip"
 	"$tools/aapt2" link -o "$out/unsigned.apk" -I "$jar" \
 		--manifest android/AndroidManifest.xml \
-		--min-sdk-version $api --target-sdk-version "${platform##*-}" \
+		--min-sdk-version $api --target-sdk-version "$target_sdk" \
 		--version-code 1 --version-name "0.1" \
 		"$out/res.zip"
 	(cd "$out/apk" && zip -qr ../unsigned.apk classes.dex lib)
